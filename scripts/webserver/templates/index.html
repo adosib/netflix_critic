@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Directory</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 20px;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            margin: 10px 0;
+        }
+        a {
+            text-decoration: none;
+            color: #007BFF;
+            font-size: 1.1rem;
+        }
+        a:hover {
+            color: #0056b3;
+            text-decoration: underline;
+        }
+        .footer {
+            text-align: center;
+            font-size: 0.8rem;
+            margin-top: 30px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>File Directory</h1>
+        <p> There are {{ files | length }} titles to choose from! </p>
+        <ul>
+            {% for filename in files %}
+                <li><a href="/title/{{ filename }}">{{ filename }}</a></li>
+            {% endfor %}
+        </ul>
+    </div>
+    <div class="footer">
+        <p>&copy; Shkr8up ChatGPT Generated</p>
+    </div>
+</body>
+</html>

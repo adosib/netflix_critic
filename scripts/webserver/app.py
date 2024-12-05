@@ -10,6 +10,7 @@ from models import Title, Availability
 from fastapi import Query, Depends, FastAPI, Request, Response, HTTPException
 from sqlmodel import Session, select, create_engine
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
@@ -18,12 +19,13 @@ THIS_DIR = Path(__file__).parent
 ROOT_DIR, *_ = [
     parent for parent in THIS_DIR.parents if parent.stem == "netflix_critic"
 ]
-DOWNLOADED_TITLEPAGES_DIR = ROOT_DIR / "data" / "raw" / "title"
+DOWNLOADED_TITLEPAGES_DIR = ROOT_DIR / "netflix_critic_data" / "data" / "raw" / "title"
 DATABASE_URL = "postgresql://localhost:5432/postgres"
 STATUS_REASONS = {x.value: x.name for x in list(HTTPStatus)}
 
 app = FastAPI()
 app.mount("/title", StaticFiles(directory=DOWNLOADED_TITLEPAGES_DIR, html=True))
+templates = Jinja2Templates(directory=THIS_DIR / "templates")
 
 # Add CORS middleware to allow cross-origin requests
 app.add_middleware(
@@ -131,81 +133,16 @@ async def log_request(request: Request, call_next):
 
 
 @app.get("/", response_class=HTMLResponse)
-def read_root():
-    files = []
-    for filepath in DOWNLOADED_TITLEPAGES_DIR.iterdir():
-        filename = filepath.name
-        if not filename.endswith(".html"):
-            continue
-        filename = f'<li><a href="/title/{filename}">{filename}</a></li>'
-        files.append(filename)
+async def read_root(request: Request):
+    # List the HTML files in the title pages directory
+    files = [
+        f.name for f in DOWNLOADED_TITLEPAGES_DIR.iterdir() if f.name.endswith(".html")
+    ]
 
-    style = """body {
-                    font-family: Arial, sans-serif;
-                    background-color: #f4f4f4;
-                    margin: 0;
-                    padding: 0;
-                }
-                .container {
-                    max-width: 800px;
-                    margin: 20px auto;
-                    padding: 20px;
-                    background-color: #fff;
-                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-                    border-radius: 8px;
-                }
-                h1 {
-                    font-size: 2rem;
-                    margin-bottom: 20px;
-                }
-                ul {
-                    list-style-type: none;
-                    padding: 0;
-                }
-                li {
-                    margin: 10px 0;
-                }
-                a {
-                    text-decoration: none;
-                    color: #007BFF;
-                    font-size: 1.1rem;
-                }
-                a:hover {
-                    color: #0056b3;
-                    text-decoration: underline;
-                }
-                .footer {
-                    text-align: center;
-                    font-size: 0.8rem;
-                    margin-top: 30px;
-                    color: #888;
-                }"""
-
-    return f"""
-    <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>File Directory</title>
-            <style>
-                {style}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>File Directory</h1>
-                <p> There are {len(files)} titles to choose from! </p>
-                <ul>
-                    { "\n".join(files) }
-                </ul>
-            </div>
-            <div class="footer">
-                <p>&copy; Shkr8up ChatGPT Generated</p>
-            </div>
-        </body>
-        </html>
-    """
+    # Render the template with the list of files
+    return templates.TemplateResponse(
+        "index.html", {"request": request, "files": files}
+    )
 
 
 engine = create_engine(DATABASE_URL, echo=True)
