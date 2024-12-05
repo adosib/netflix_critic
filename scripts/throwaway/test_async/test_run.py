@@ -26,9 +26,11 @@ async def get_netflix(session, limiter, nflx_id):
 async def main(args):
     background_tasks = set()
     responses = []
-    # Create one session and use it for all requests
+
+    # Limit to 50 req/s w/o bursting https://aiolimiter.readthedocs.io/en/latest/#bursting
+    limiter = AsyncLimiter(1, 1 / 50.0)
+
     connector = aiohttp.TCPConnector(limit=args.limit, limit_per_host=args.limit)
-    limiter = AsyncLimiter(10, 1)  # 10 req/s
     async with aiohttp.ClientSession(
         connector=connector, headers={"source-path": __file__}
     ) as session:
@@ -86,7 +88,8 @@ if __name__ == "__main__":
                 FROM titles
                 JOIN availability 
                     ON availability.netflix_id = titles.netflix_id
-                WHERE availability.available = True;
+                WHERE availability.available = True
+                LIMIT 1000;
             """)
 
             logging.info(f"Running query: {textwrap.indent(sql, ' '*3)}")
