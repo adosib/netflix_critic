@@ -1,0 +1,10 @@
+.DS_Store
+*.yaml
+*.env
+config*
+api_key.txt
+logs/*
+data/*
+.venv/*
+**__pycache__**
+node_modules/*

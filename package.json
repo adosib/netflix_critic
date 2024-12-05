@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "jsdom": "^25.0.1"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^15.11.7"
+  }
+}

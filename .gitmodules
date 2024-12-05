@@ -1,0 +1,3 @@
+[submodule "netflix_critic_data"]
+	path = netflix_critic_data
+	url = https://github.com/adosib/netflix_critic_data

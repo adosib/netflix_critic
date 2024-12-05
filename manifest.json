@@ -1,0 +1,29 @@
+{
+  "manifest_version": 2,
+  "name": "Netflix Movie Ratings",
+  "version": "0.0.1",
+  "author": "Abdulah Sibalo",
+  "description": "An extension to add reviews to the Netflix user interface under any movie title.",
+  "icons": {"16": "netflix_logo.png",
+            "48": "netflix_logo.png",
+            "128": "netflix_logo.png" },
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "browser_action": {
+    "default_title": "Look up movie ratings."
+  },
+
+  "background": {
+    "scripts": ["background.js", "jquery.min.js"]
+  },
+  
+  "content_scripts": [{
+    "matches": [
+      "*://*.netflix.com/*"
+    ],
+    "js": ["content.js"]
+  }]
+
+}
