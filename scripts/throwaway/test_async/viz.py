@@ -23,7 +23,7 @@ ROOT_DIR, *_ = [
 def filter_for_time_range(data: list, seconds=60):
     last_observation = max(data, key=lambda x: x[0])
     timestamp, user_agent = last_observation
-    threshold_timestamp = last_observation - datetime.timedelta(seconds=seconds)
+    threshold_timestamp = timestamp - datetime.timedelta(seconds=seconds)
     return [item for item in data if item[0] > threshold_timestamp]
 
 
