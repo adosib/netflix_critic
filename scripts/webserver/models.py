@@ -8,16 +8,19 @@ from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import (
     CHAR,
     Enum,
+    Text,
     String,
     Boolean,
     Integer,
     DateTime,
     BigInteger,
+    SmallInteger,
     UniqueConstraint,
     ForeignKeyConstraint,
     PrimaryKeyConstraint,
 )
-from sqlalchemy.orm import mapped_column
+from sqlalchemy.schema import Column
+from sqlalchemy.dialects.postgresql import JSONB
 
 
 class Title(SQLModel, table=True):
@@ -27,29 +30,21 @@ class Title(SQLModel, table=True):
         UniqueConstraint("netflix_id", name="netflix_id"),
     )
 
-    id: Optional[int] = Field(
-        default=None, sa_column=mapped_column("id", Integer, primary_key=True)
-    )
-    netflix_id: Optional[int] = Field(
-        default=None, sa_column=mapped_column("netflix_id", BigInteger)
-    )
-    title: Optional[str] = Field(
-        default=None, sa_column=mapped_column("title", String(256))
-    )
+    id: int = Field(default=None, sa_column=Column("id", Integer, primary_key=True))
+    netflix_id: int = Field(default=None, sa_column=Column("netflix_id", BigInteger))
+    title: Optional[str] = Field(default=None, sa_column=Column("title", String(256)))
     content_type: Optional[str] = Field(
         default=None,
-        sa_column=mapped_column(
-            "content_type", Enum("movie", "series", name="content_type")
-        ),
+        sa_column=Column("content_type", Enum("movie", "series", name="content_type")),
     )
     release_year: Optional[int] = Field(
-        default=None, sa_column=mapped_column("release_year", Integer)
+        default=None, sa_column=Column("release_year", Integer)
     )
-    runtime: Optional[int] = Field(
-        default=None, sa_column=mapped_column("runtime", Integer)
-    )
+    runtime: Optional[int] = Field(default=None, sa_column=Column("runtime", Integer))
+    meta_data: Optional[dict] = Field(default=None, sa_column=Column("metadata", JSONB))
 
     availability: List["Availability"] = Relationship(back_populates="title")
+    ratings: List["Rating"] = Relationship(back_populates="title")
 
 
 class Availability(SQLModel, table=True):
@@ -58,25 +53,58 @@ class Availability(SQLModel, table=True):
             ["netflix_id"], ["titles.netflix_id"], name="availability_netflix_id_fkey"
         ),
         PrimaryKeyConstraint("id", name="availability_pkey"),
+        UniqueConstraint("country", "netflix_id", name="unique_country_and_netflix_id"),
     )
 
-    id: int = Field(
-        default=None, sa_column=mapped_column("id", Integer, primary_key=True)
+    id: Optional[int] = Field(
+        default=None, sa_column=Column("id", Integer, primary_key=True)
     )
-    netflix_id: int = Field(
-        default=None, sa_column=mapped_column("netflix_id", BigInteger)
+    netflix_id: Optional[int] = Field(
+        default=None, sa_column=Column("netflix_id", BigInteger)
     )
-    region_code: Optional[str] = Field(
-        default=None, sa_column=mapped_column("region_code", String(12))
+    redirected_netflix_id: Optional[int] = Field(
+        default=None, sa_column=Column("redirected_netflix_id", BigInteger)
     )
-    country: Optional[str] = Field(
-        default=None, sa_column=mapped_column("country", CHAR(2))
+    country: Optional[str] = Field(default=None, sa_column=Column("country", CHAR(2)))
+    titlepage_reachable: Optional[bool] = Field(
+        default=None, sa_column=Column("titlepage_reachable", Boolean)
     )
     available: Optional[bool] = Field(
-        default=None, sa_column=mapped_column("available", Boolean)
+        default=None, sa_column=Column("available", Boolean)
     )
     checked_at: Optional[datetime] = Field(
-        default=None, sa_column=mapped_column("checked_at", DateTime)
+        default=None, sa_column=Column("checked_at", DateTime)
     )
 
     title: Title = Relationship(back_populates="availability")
+
+
+class Rating(SQLModel, table=True):
+    __tablename__ = "ratings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["netflix_id"], ["titles.netflix_id"], name="ratings_netflix_id_fkey"
+        ),
+        PrimaryKeyConstraint("id", name="ratings_pkey"),
+        UniqueConstraint("vendor", "netflix_id", name="unique_vendor_and_netflix_id"),
+    )
+
+    id: Optional[int] = Field(
+        default=None, sa_column=Column("id", Integer, primary_key=True)
+    )
+    netflix_id: Optional[int] = Field(
+        default=None, sa_column=Column("netflix_id", BigInteger)
+    )
+    vendor: Optional[str] = Field(default=None, sa_column=Column("vendor", String(32)))
+    url: Optional[str] = Field(default=None, sa_column=Column("url", Text))
+    rating: Optional[int] = Field(
+        default=None, sa_column=Column("rating", SmallInteger)
+    )
+    ratings_count: Optional[int] = Field(
+        default=None, sa_column=Column("ratings_count", Integer)
+    )
+    checked_at: Optional[datetime] = Field(
+        default=None, sa_column=Column("checked_at", DateTime)
+    )
+
+    title: Title = Relationship(back_populates="ratings")
