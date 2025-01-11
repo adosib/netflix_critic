@@ -1,11 +1,8 @@
 
 (async function() {
     console.log("Chrome extension 'Netflix Critic' activated");
-    
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = chrome.runtime.getURL('styles.css');
-    document.head.appendChild(link);
+
+    chrome.storage.local.clear(); // TODO remove
     
     // TODO probably move all this stuff to the background
     try {
@@ -129,26 +126,72 @@ class TitleCard {
 
     get googleRating() {
         if (this.#rating) {
-            return this.#rating;
+            return Promise.resolve(this.#rating);
         }
-        const rating = this.getProperty("rating");
-        this.#rating = rating;  // Cache the result
-        return rating;
+        return this.getProperty("rating").then((rating) => {
+            this.#rating = rating; // Cache the rating
+            return rating;
+        });
     }
 
     async #lookup(){
-        const cachedData = await chrome.storage.local.get(this.netflixId.toString());
-        if (Object.keys(cachedData).length > 0){
-            return cachedData[this.netflixId];
-        }
-        chrome.runtime.sendMessage({
-            type: 'missingTitleData',
-            netflixId: this.netflixId
+        const key = this.netflixId.toString();
+
+        return new Promise((resolve) => {
+            let elapsed = 0;
+            const interval = 500;
+            const timeout = 30000;
+
+            const checkStorage = async () => {
+                const cachedData = await chrome.storage.local.get(key);
+                if (Object.keys(cachedData).length > 0) {
+                    clearInterval(intervalId);
+                    resolve(cachedData[key]);
+                }
+            };
+
+            const intervalId = setInterval(async () => {
+                elapsed += interval;
+                if (elapsed >= timeout) {
+                    clearInterval(intervalId);
+                    console.warn(`Timeout reached for title ID ${this.netflixId}`);
+                    resolve(null);
+                    return;
+                }
+                await checkStorage();
+            }, interval);
+
+            checkStorage();
+            chrome.runtime.sendMessage({
+                type: 'missingTitleData',
+                netflixId: this.netflixId
+            });
         });
-        return null;
     }
 
 }
+
+function getColorForValue(value) {
+    // Ensure value is within 0-100 range
+    value = Math.min(100, Math.max(0, value));
+
+    if (value <= 50) {
+        // Transition from red to yellow (0-50)
+        const ratio = value / 50;
+        const r = Math.round(220 + ratio * (240 - 220)); // Red fades
+        const g = Math.round(80 + ratio * (200 - 80));  // Green increases
+        const b = Math.round(80);                      // Blue remains constant
+        return `rgb(${r}, ${g}, ${b})`;
+    } else {
+        // Transition from yellow to green (51-100)
+        const ratio = (value - 50) / 50;
+        const r = Math.round(240 - ratio * (240 - 100)); // Red decreases
+        const g = Math.round(200 + ratio * (180 - 200)); // Green increases
+        const b = Math.round(80 + ratio * (100 - 80));   // Blue increases slightly
+        return `rgb(${r}, ${g}, ${b})`;
+    }
+}
+
 
 async function reloadDOM(){
     let lolomoRows = document.querySelectorAll(
@@ -168,8 +211,22 @@ async function reloadDOM(){
 
         for(const titleCard of titleCardsArr){
             let title = new TitleCard(titleCard);
-            // TODO handle all processing in the constructor
-            title.divElement.innerHTML += "<div class=netflix-critic><p>" + await title.googleRating + "</p></div>";
+            
+            const ratingDiv = document.createElement('div');
+            ratingDiv.className = "netflix-critic";
+            
+            const ratingSpinnerDiv = document.createElement('div');
+            ratingSpinnerDiv.className = 'spinner';
+
+            ratingDiv.appendChild(ratingSpinnerDiv)
+            title.divElement.appendChild(ratingDiv);
+
+            title.googleRating.then((rating) => {
+                ratingSpinnerDiv.remove();
+                ratingDiv.style.color = getColorForValue(rating);
+                ratingDiv.innerHTML = `<p>${rating || "N/A"}</p>`;
+            });
+            
         }
     }
 }
