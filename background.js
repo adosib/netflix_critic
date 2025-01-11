@@ -1,24 +1,49 @@
-console.log("background running");
+let payload = new Set();
+let sendTimeout = null;
 
-chrome.runtime.onMessage.addListener(receiver);
+chrome.commands.onCommand.addListener((shortcut) => { // TODO remove
+    if(shortcut.includes("+M")) {
+        chrome.tabs.reload();
+        chrome.runtime.reload();
+    }
+})
 
-// TODO: Find a way of securely storing the API key
-var api_key = ""
-// example request: https://api.themoviedb.org/3/movie/550?api_key=aeb21d85f352c4c50978e7ff8fe8177b
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'missingTitleData') {
+        // Add data to the payload
+        payload.add(message.netflixId);
 
-function receiver(request, sender, sendResponse){
-    console.log(request);
-    // If the slug has the genre/83 or genre/[0-9]+?bc=83, it's a TV show
-    // If slug has genre/34399 or genre/[0-9]+?bc=34399, it's a movie
-    if(request[0])
-    let movie = Object.keys(request)[0];  // The first movie in the object
-    movie = '"' + movie + '"';  // phrase match
-    // Build the API request URL
-    let search = 'https://api.themoviedb.org/3/search/movie?api_key=' + 
-                 api_key + 
-                 '&query=' + movie;
-    // Make the request to the API endpoint and handle it
-    let rating = $.getJSON(search);
-    console.log(rating);
+        // Clear the existing timeout if any
+        if (sendTimeout) {
+            clearTimeout(sendTimeout);
+        }
 
+        // Set a new timeout to send the payload after 1 second
+        sendTimeout = setTimeout(() => {
+            sendPayload();
+        }, 1000);
+    }
+});
+
+function sendPayload() {
+    if (payload.size === 0) return;
+
+    const dataToSend = Array.from(payload); // Copy the current payload
+    payload = new Set(); // Clear the payload
+
+    fetch('http://localhost:8000/api/titles', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(dataToSend),
+    })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Payload sent successfully:', data);
+            chrome.storage.local.set(data);
+        })
+        .catch(error => {
+            console.error('Error sending payload:', error);
+        });
 }
