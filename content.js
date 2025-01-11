@@ -1,28 +1,27 @@
 
 (async function() {
     console.log("Chrome extension 'Netflix Critic' activated");
-
+    
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = chrome.runtime.getURL('styles.css');
     document.head.appendChild(link);
-
+    
+    // TODO probably move all this stuff to the background
     try {
         // Await the fetch operation and handle errors
         const data = await getData("http://localhost:8000/api/titles");
-
+        
         // Check if data exists before proceeding
         if (data) {
-            for (const key in data) {
-                localStorage.setItem(key, JSON.stringify(data[key]));
-            }
+            chrome.storage.local.set(data);
         } else {
             console.error("No data returned from the API.");
         }
     } catch (error) {
         console.error("Error fetching data:", error);
     }
-
+    
 })();
 
 
@@ -60,6 +59,10 @@ async function getData(url){
 class TitleCard {
     // Private cache
     #netflixId = null;
+    #contentType = null;
+    #releaseYear = null;
+    #runtime = null;
+    #rating = null;
 
     constructor(divElement){
         // Check if the passed element is a valid DOM node and has the expected structure
@@ -68,7 +71,6 @@ class TitleCard {
         }
         this.divElement = divElement;
         divElement.dataset.netflixCriticProcessed = true;
-        divElement.netflixCriticTitleCardObj = this;
     }
 
     get netflixId() {
@@ -99,48 +101,75 @@ class TitleCard {
     }
 
     get contentType() {
-        return this.getProperty("content_type");
+        if (this.#contentType) {
+            return this.#contentType;
+        }
+        const contentType = this.getProperty("content_type");
+        this.#contentType = contentType;  // Cache the result
+        return contentType;
     }
     
     get releaseYear() {
-        return this.getProperty("release_year");
+        if (this.#releaseYear) {
+            return this.#releaseYear;
+        }
+        const releaseYear = this.getProperty("release_year");
+        this.#releaseYear = releaseYear;  // Cache the result
+        return releaseYear;
     }
     
     get runtime() {
-        return this.getProperty("runtime");
+        if (this.#runtime) {
+            return this.#runtime;
+        }
+        const runtime = this.getProperty("runtime");
+        this.#runtime = runtime;  // Cache the result
+        return runtime;
     }
 
-    #storeData(jsonData){
-        localStorage.setItem(jsonData["netflix_id"], JSON.stringify(jsonData));
+    get googleRating() {
+        if (this.#rating) {
+            return this.#rating;
+        }
+        const rating = this.getProperty("rating");
+        this.#rating = rating;  // Cache the result
+        return rating;
     }
 
     async #lookup(){
-        const cachedData = localStorage.getItem(this.netflixId);
-        if(cachedData){
-            return JSON.parse(cachedData);
+        const cachedData = await chrome.storage.local.get(this.netflixId.toString());
+        if (Object.keys(cachedData).length > 0){
+            return cachedData[this.netflixId];
         }
-        // Right now, if the title isn't found, this can get called over and over. I need to fix that.
-        const jsonData = await getData(`http://localhost:8000/api/title/${this.netflixId}`); // TODO set off some async function here
-        if(jsonData){
-            this.#storeData(jsonData);
-            return jsonData;
-        }
+        chrome.runtime.sendMessage({
+            type: 'missingTitleData',
+            netflixId: this.netflixId
+        });
         return null;
     }
 
 }
 
-function reloadDOM(){
-    // TODO I probably want to narrow this selector down to elements I haven't processed already, if possible
-    let titleCardsArr = document.querySelectorAll('.title-card-container:not([data-netflix-critic-processed="true"])');
-    for(i = 0; i < titleCardsArr.length; i++){
-        let title = new TitleCard(titleCardsArr[i])
-        // TODO handle all processing in the constructor
-        title.divElement.innerHTML += "<div class=netflix-critic><p>" + title.runtime + "</p></div>";
-    }
-}
+async function reloadDOM(){
+    let lolomoRows = document.querySelectorAll(
+        '.lolomoRow'+
+        // Exclude live/upcoming
+        ':not([data-list-context="configbased_liveandupcomingepisodes"])'+
+        // Exclude mobile games
+        ':not([data-list-context="configbased_mobilepersonalizedgames"])'
+    );
 
-function callbackFunc(backgroundMessage){
-    // Send movie titles without ratings to the background script
-    chrome.runtime.sendMessage(backgroundMessage);
+    for (const lolomoRow of lolomoRows){
+
+        let titleCardsArr = lolomoRow.querySelectorAll(
+            '.title-card-container'+
+            ':not([data-netflix-critic-processed="true"])'
+        );
+
+        for(const titleCard of titleCardsArr){
+            let title = new TitleCard(titleCard);
+            // TODO handle all processing in the constructor
+            title.divElement.innerHTML += "<div class=netflix-critic><p>" + await title.googleRating + "</p></div>";
+        }
+    }
 }
