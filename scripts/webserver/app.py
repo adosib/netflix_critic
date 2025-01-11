@@ -2,12 +2,13 @@ import sys
 import json
 import logging
 from http import HTTPStatus
-from typing import Dict, Annotated
+from typing import Dict, Optional, Annotated
 from pathlib import Path
 
 import uvicorn
-from models import Title, Availability
+from models import Title, Rating, Availability
 from fastapi import Query, Depends, FastAPI, Request, Response, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select, create_engine
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -91,7 +92,7 @@ logger.addHandler(get_stream_handler(formatter))
 logger.addHandler(get_file_handler(formatter))
 
 
-def get_extra_info(request: Request, response: Response):
+async def get_extra_info(request: Request, response: Response):
     return {
         "req": {
             "url": request.url.path,
@@ -101,7 +102,8 @@ def get_extra_info(request: Request, response: Response):
             "method": request.method,
             "http_version": request.scope["http_version"],
             "original_url": request.url.path,
-            "query": {},
+            "query": dict(request.query_params),
+            "body": request.request_body,
         },
         "res": {
             "status_code": response.status_code,
@@ -111,17 +113,21 @@ def get_extra_info(request: Request, response: Response):
     }
 
 
-def write_log_data(request, response):
+async def write_log_data(request, response):
     # From the docs: The fourth keyword argument is extra which can be used to pass a dictionary
     # which is used to populate the __dict__ of the LogRecord created for the logging event with user-defined attributes.
     logger.info(
         request.method + " " + request.url.path,
-        extra={"extra_info": get_extra_info(request, response)},
+        extra={"extra_info": await get_extra_info(request, response)},
     )
 
 
 @app.middleware("http")
 async def log_request(request: Request, call_next):
+    try:
+        request.request_body = await request.json()
+    except json.decoder.JSONDecodeError:
+        request.request_body = None
     response = await call_next(request)
     response.background = BackgroundTask(
         write_log_data, request, response
@@ -156,6 +162,16 @@ def get_session():
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
+class TitleResponse(BaseModel):
+    id: int
+    netflix_id: int
+    title: Optional[str]
+    content_type: Optional[str]
+    release_year: Optional[int]
+    runtime: Optional[int]
+    rating: Optional[int]
+
+
 @app.get("/api/title/{title_id}", response_model=Title)
 def get_title_data(title_id: int, session: SessionDep):
     title = session.exec(select(Title).where(Title.netflix_id == title_id)).first()
@@ -164,13 +180,26 @@ def get_title_data(title_id: int, session: SessionDep):
     return title
 
 
-@app.get("/api/titles", response_model=Dict[int, Title])
+@app.get("/api/titles", response_model=Dict[int, TitleResponse])
 def get_all_titles(
     session: SessionDep, available_in: Annotated[list[str] | None, Query()] = ("US",)
 ):
     titles = session.exec(
-        select(Title)
+        select(
+            Title.id,
+            Title.netflix_id,
+            Title.title,
+            Title.content_type,
+            Title.release_year,
+            Title.runtime,
+            Rating.rating,
+        )
         .join(Availability)
+        .join(
+            Rating,
+            (Rating.netflix_id == Title.netflix_id) & (Rating.vendor == "Google users"),
+            isouter=True,
+        )
         .where(Availability.available)
         .where(Availability.country.in_(available_in))
     ).all()
@@ -178,6 +207,22 @@ def get_all_titles(
         raise HTTPException(status_code=404, detail="No titles not found")
     titles_dict = {title.netflix_id: title for title in titles}
     return titles_dict
+
+
+@app.post("/api/titles", response_model=Dict[int, TitleResponse])
+def post_titles(payload: list[int]):
+    return {
+        netflix_id: TitleResponse(
+            id=123,
+            netflix_id=netflix_id,
+            title="dummy",
+            content_type="movie",
+            release_year=2025,
+            runtime=9999,
+            rating=88,
+        )
+        for netflix_id in payload
+    }
 
 
 if __name__ == "__main__":
