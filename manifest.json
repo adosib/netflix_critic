@@ -20,6 +20,7 @@
       "*://*.netflix.com/*"
     ],
     "js": ["content.js"],
+    "css": ["styles.css"],
     "runs_at": "document_start"
   }],
   "commands": {

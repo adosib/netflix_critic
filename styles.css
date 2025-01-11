@@ -1,13 +1,23 @@
-p.netflix-critic {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 24px;
+.netflix-critic p {
+  font-size: 16px;
   font-weight: bold;
-  color: red;  /* Default color */
-  pointer-events: none;
 }
-iframe.netflix-critic {
-  display: none;
+
+.netflix-critic .spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid gray;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+      transform: rotate(0deg);
+  }
+  to {
+      transform: rotate(360deg);
+  }
 }
