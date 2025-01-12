@@ -4,10 +4,19 @@ import logging
 from http import HTTPStatus
 from typing import Dict, Optional, Annotated
 from pathlib import Path
+from datetime import datetime, timezone
 
 import uvicorn
 from models import Title, Rating, Availability
-from fastapi import Query, Depends, FastAPI, Request, Response, HTTPException
+from fastapi import (
+    Query,
+    Depends,
+    FastAPI,
+    Request,
+    Response,
+    HTTPException,
+    BackgroundTasks,
+)
 from pydantic import BaseModel
 from sqlmodel import Session, select, create_engine
 from fastapi.responses import HTMLResponse
@@ -15,6 +24,12 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
+
+from netflix_critic_data.scripts.database_setup.populate_availability import (
+    TITLEPAGE_SAVETO_DIR,
+    SessionHandler,
+    save_response_body,
+)
 
 THIS_DIR = Path(__file__).parent
 ROOT_DIR, *_ = [
@@ -161,6 +176,8 @@ def get_session():
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
+http_session_handler = SessionHandler()
+
 
 class TitleResponse(BaseModel):
     id: int
@@ -209,8 +226,55 @@ def get_all_titles(
     return titles_dict
 
 
+async def download_titlepage(
+    title_id,
+    saveto_dir=TITLEPAGE_SAVETO_DIR,
+):
+    async with http_session_handler.limiter:
+        request_url = f"https://www.netflix.com/title/{title_id}"
+        session = await http_session_handler.choose_session(request_url)
+        async with session.get(request_url) as response:
+            logger.info(f"Starting request for {request_url}")
+            status = response.status
+
+            if status not in (200, 301, 302, 404):
+                response.raise_for_status()
+
+            html = await response.text()
+            save_response_body(html, saveto_dir / f"{title_id}.html")
+
+
 @app.post("/api/titles", response_model=Dict[int, TitleResponse])
-def post_titles(payload: list[int]):
+def post_titles(
+    session: SessionDep, payload: list[int], background_tasks: BackgroundTasks
+):
+    titles = []
+    availability = []
+
+    for netflix_id in payload:
+        title = Title(
+            netflix_id=netflix_id,
+            title="dummy",
+        )
+        titles.append(title)
+
+        availability.append(
+            Availability(
+                netflix_id=netflix_id,
+                country="US",
+                titlepage_reachable=True,
+                available=True,
+                checked_at=datetime.now(timezone.utc),
+                title=title,
+            )
+        )
+
+        background_tasks.add_task(download_titlepage, title_id=netflix_id)
+
+    session.exec(Title.bulk_insert_ignore_conflicts(titles))
+    session.exec(Availability.bulk_insert_ignore_conflicts(availability))
+    session.commit()
+
     return {
         netflix_id: TitleResponse(
             id=123,
@@ -219,7 +283,7 @@ def post_titles(payload: list[int]):
             content_type="movie",
             release_year=2025,
             runtime=9999,
-            rating=88,
+            rating=0,
         )
         for netflix_id in payload
     }
