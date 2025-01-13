@@ -1,5 +1,6 @@
 import sys
 import json
+import asyncio
 import logging
 from http import HTTPStatus
 from typing import Dict, Optional, Annotated
@@ -7,6 +8,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import uvicorn
+import pythonmonkey as pm
+from bs4 import BeautifulSoup
 from models import Title, Rating, Availability
 from fastapi import (
     Query,
@@ -25,10 +28,12 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
 
+from netflix_critic_data.scripts.database_setup.backfill_titles import (
+    HTMLContent,
+    get_field,
+)
 from netflix_critic_data.scripts.database_setup.populate_availability import (
-    TITLEPAGE_SAVETO_DIR,
     SessionHandler,
-    save_response_body,
 )
 
 THIS_DIR = Path(__file__).parent
@@ -176,12 +181,10 @@ def get_session():
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
-http_session_handler = SessionHandler()
-
 
 class TitleResponse(BaseModel):
-    id: int
-    netflix_id: int
+    id: Optional[int]
+    netflix_id: Optional[int]
     title: Optional[str]
     content_type: Optional[str]
     release_year: Optional[int]
@@ -190,7 +193,7 @@ class TitleResponse(BaseModel):
 
 
 @app.get("/api/title/{title_id}", response_model=Title)
-def get_title_data(title_id: int, session: SessionDep):
+def get_title(title_id: int, session: SessionDep):
     title = session.exec(select(Title).where(Title.netflix_id == title_id)).first()
     if title is None:
         raise HTTPException(status_code=404, detail="Title not found")
@@ -226,35 +229,100 @@ def get_all_titles(
     return titles_dict
 
 
-async def download_titlepage(
-    title_id,
-    saveto_dir=TITLEPAGE_SAVETO_DIR,
-):
-    async with http_session_handler.limiter:
-        request_url = f"https://www.netflix.com/title/{title_id}"
-        session = await http_session_handler.choose_session(request_url)
-        async with session.get(request_url) as response:
-            logger.info(f"Starting request for {request_url}")
-            status = response.status
+async def find_all_script_elements(html: HTMLContent):
+    """
+    Finds and returns all <script> elements in the provided HTML string.
 
-            if status not in (200, 301, 302, 404):
-                response.raise_for_status()
+    :param html: A string containing the HTML content.
+    :return: A list of dictionaries with script details (content and attributes).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    script_elements = soup.find_all("script")
 
-            html = await response.text()
-            save_response_body(html, saveto_dir / f"{title_id}.html")
+    scripts_info = []
+    for script in script_elements:
+        script_info = {
+            "content": script.string,  # Inline script content (None if external)
+            "attributes": script.attrs,  # Script element attributes (e.g., src, type)
+        }
+        scripts_info.append(script_info)
+
+    return scripts_info
+
+
+def _sanitize_pythonmonkey_obj(obj):
+    if isinstance(obj, dict):
+        return {k: _sanitize_pythonmonkey_obj(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_pythonmonkey_obj(v) for v in obj]
+    elif obj == pm.null:
+        return None
+    else:
+        return obj
+
+
+async def fetch_and_process_title(session, request_url) -> dict:
+    async with session.get(request_url) as response:
+        logger.info(f"Starting request for {request_url}")
+        if response.status not in (200, 301, 302, 404):
+            response.raise_for_status()
+
+        html_content = HTMLContent(await response.text())
+        scripts = await find_all_script_elements(html_content)
+
+        for script in scripts:
+            content = script["content"]
+            if content is None:
+                continue
+            context_def = content.find("reactContext =")
+            if context_def != -1:
+                try:
+                    return _sanitize_pythonmonkey_obj(
+                        pm.eval(
+                            script["content"][context_def:]
+                        ).models.nmTitleUI.data.sectionData
+                    )
+                except (KeyError, pm.SpiderMonkeyError) as e:
+                    logger.exception(e)
+
+
+async def download_titlepages(title_ids: list[int]) -> dict[int, dict]:
+    title_data = {}
+    async with SessionHandler() as http_session_handler:
+        async with http_session_handler.limiter:
+            async with asyncio.TaskGroup() as tg:
+                for title_id in title_ids:
+                    request_url = f"https://www.netflix.com/title/{title_id}"
+                    title_data[title_id] = tg.create_task(
+                        fetch_and_process_title(
+                            http_session_handler.noauth_session, request_url
+                        ),
+                        name=str(title_id),
+                    )
+    return {k: v.result() for k, v in title_data.items()}
 
 
 @app.post("/api/titles", response_model=Dict[int, TitleResponse])
-def post_titles(
+async def post_titles(
     session: SessionDep, payload: list[int], background_tasks: BackgroundTasks
 ):
+    # background_tasks.add_task(download_titlepages, title_ids=payload)
+    titles_data = await download_titlepages(payload)
+
     titles = []
     availability = []
 
     for netflix_id in payload:
+        title_data = titles_data[netflix_id]
         title = Title(
             netflix_id=netflix_id,
-            title="dummy",
+            title=get_field(title_data, "title"),
+            content_type=get_field(title_data, "content_type").replace(
+                "show", "tv series"
+            ),
+            release_year=get_field(title_data, "release_year"),
+            runtime=get_field(title_data, "runtime"),
+            meta_data=title_data,
         )
         titles.append(title)
 
@@ -269,23 +337,16 @@ def post_titles(
             )
         )
 
-        background_tasks.add_task(download_titlepage, title_id=netflix_id)
-
     session.exec(Title.bulk_insert_ignore_conflicts(titles))
     session.exec(Availability.bulk_insert_ignore_conflicts(availability))
     session.commit()
 
     return {
         netflix_id: TitleResponse(
-            id=123,
-            netflix_id=netflix_id,
-            title="dummy",
-            content_type="movie",
-            release_year=2025,
-            runtime=9999,
+            **title.model_dump(),
             rating=0,
         )
-        for netflix_id in payload
+        for title in titles
     }
 
 
