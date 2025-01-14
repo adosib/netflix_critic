@@ -230,7 +230,7 @@ def get_all_titles(
     return titles_dict
 
 
-async def find_all_script_elements(html: HTMLContent):
+def find_all_script_elements(html: HTMLContent):
     """
     Finds and returns all <script> elements in the provided HTML string.
 
@@ -262,7 +262,9 @@ def _sanitize_pythonmonkey_obj(obj):
         return obj
 
 
-async def fetch_and_process_title(session, title_id) -> dict:
+async def fetch_and_process_title(
+    session, title_id, background_tasks: BackgroundTasks
+) -> list[dict]:
     request_url = f"https://www.netflix.com/title/{title_id}"
     async with session.get(request_url) as response:
         logger.info(f"Starting request for {request_url}")
@@ -270,7 +272,13 @@ async def fetch_and_process_title(session, title_id) -> dict:
             response.raise_for_status()
 
         html_content = HTMLContent(await response.text())
-        scripts = await find_all_script_elements(html_content)
+        scripts = find_all_script_elements(html_content)
+
+        background_tasks.add_task(
+            save_response_body,
+            html_content,
+            f"/Users/asibalo/Documents/Dev/PetProjects/netflix_critic_data/data/raw/title/{title_id}.html",
+        )
 
         for script in scripts:
             content = script["content"]
@@ -280,20 +288,16 @@ async def fetch_and_process_title(session, title_id) -> dict:
             if context_def != -1:
                 try:
                     react_context = script["content"][context_def:]
-                    # TODO html_content is large and I'd really rather it just get garbage collected
-                    # rather than returning it... need to find a way to move the background task save logic
-                    # to this location here
-                    return {
-                        "html": html_content,
-                        "react_context": _sanitize_pythonmonkey_obj(
-                            pm.eval(react_context).models.nmTitleUI.data.sectionData
-                        ),
-                    }
+                    return _sanitize_pythonmonkey_obj(
+                        pm.eval(react_context).models.nmTitleUI.data.sectionData
+                    )
                 except (KeyError, AttributeError, pm.SpiderMonkeyError) as e:
                     logger.exception(e)
 
 
-async def download_titlepages(title_ids: list[int]) -> dict[int, dict]:
+async def download_titlepages(
+    title_ids: list[int], background_tasks: BackgroundTasks
+) -> dict[int, list]:
     title_data = {}
     async with SessionHandler() as http_session_handler:
         async with http_session_handler.limiter:
@@ -301,7 +305,9 @@ async def download_titlepages(title_ids: list[int]) -> dict[int, dict]:
                 for title_id in title_ids:
                     title_data[title_id] = tg.create_task(
                         fetch_and_process_title(
-                            http_session_handler.noauth_session, title_id
+                            http_session_handler.noauth_session,
+                            title_id,
+                            background_tasks,
                         ),
                         name=str(title_id),
                     )
@@ -312,31 +318,22 @@ async def download_titlepages(title_ids: list[int]) -> dict[int, dict]:
 async def post_titles(
     session: SessionDep, payload: list[int], background_tasks: BackgroundTasks
 ):
-    # background_tasks.add_task(download_titlepages, title_ids=payload)
-    titles_data = await download_titlepages(payload)
+    titles_data = await download_titlepages(payload, background_tasks)
 
     titles = []
     availability = []
 
     for netflix_id in payload:
         title_data = titles_data[netflix_id]
-        react_context = title_data["react_context"]
-
-        background_tasks.add_task(
-            save_response_body,
-            title_data["html"],
-            f"/Users/asibalo/Documents/Dev/PetProjects/netflix_critic_data/data/raw/title/{netflix_id}.html",
-        )
-
         title = Title(
             netflix_id=netflix_id,
-            title=get_field(react_context, "title"),
-            content_type=get_field(react_context, "content_type").replace(
+            title=get_field(title_data, "title"),
+            content_type=get_field(title_data, "content_type").replace(
                 "show", "tv series"
             ),
-            release_year=get_field(react_context, "release_year"),
-            runtime=get_field(react_context, "runtime"),
-            meta_data=react_context,
+            release_year=get_field(title_data, "release_year"),
+            runtime=get_field(title_data, "runtime"),
+            meta_data=title_data,
         )
         titles.append(title)
 
