@@ -34,6 +34,7 @@ from netflix_critic_data.scripts.database_setup.backfill_titles import (
 )
 from netflix_critic_data.scripts.database_setup.populate_availability import (
     SessionHandler,
+    save_response_body,
 )
 
 THIS_DIR = Path(__file__).parent
@@ -261,7 +262,8 @@ def _sanitize_pythonmonkey_obj(obj):
         return obj
 
 
-async def fetch_and_process_title(session, request_url) -> dict:
+async def fetch_and_process_title(session, title_id) -> dict:
+    request_url = f"https://www.netflix.com/title/{title_id}"
     async with session.get(request_url) as response:
         logger.info(f"Starting request for {request_url}")
         if response.status not in (200, 301, 302, 404):
@@ -277,12 +279,17 @@ async def fetch_and_process_title(session, request_url) -> dict:
             context_def = content.find("reactContext =")
             if context_def != -1:
                 try:
-                    return _sanitize_pythonmonkey_obj(
-                        pm.eval(
-                            script["content"][context_def:]
-                        ).models.nmTitleUI.data.sectionData
-                    )
-                except (KeyError, pm.SpiderMonkeyError) as e:
+                    react_context = script["content"][context_def:]
+                    # TODO html_content is large and I'd really rather it just get garbage collected
+                    # rather than returning it... need to find a way to move the background task save logic
+                    # to this location here
+                    return {
+                        "html": html_content,
+                        "react_context": _sanitize_pythonmonkey_obj(
+                            pm.eval(react_context).models.nmTitleUI.data.sectionData
+                        ),
+                    }
+                except (KeyError, AttributeError, pm.SpiderMonkeyError) as e:
                     logger.exception(e)
 
 
@@ -292,10 +299,9 @@ async def download_titlepages(title_ids: list[int]) -> dict[int, dict]:
         async with http_session_handler.limiter:
             async with asyncio.TaskGroup() as tg:
                 for title_id in title_ids:
-                    request_url = f"https://www.netflix.com/title/{title_id}"
                     title_data[title_id] = tg.create_task(
                         fetch_and_process_title(
-                            http_session_handler.noauth_session, request_url
+                            http_session_handler.noauth_session, title_id
                         ),
                         name=str(title_id),
                     )
@@ -314,15 +320,23 @@ async def post_titles(
 
     for netflix_id in payload:
         title_data = titles_data[netflix_id]
+        react_context = title_data["react_context"]
+
+        background_tasks.add_task(
+            save_response_body,
+            title_data["html"],
+            f"/Users/asibalo/Documents/Dev/PetProjects/netflix_critic_data/data/raw/title/{netflix_id}.html",
+        )
+
         title = Title(
             netflix_id=netflix_id,
-            title=get_field(title_data, "title"),
-            content_type=get_field(title_data, "content_type").replace(
+            title=get_field(react_context, "title"),
+            content_type=get_field(react_context, "content_type").replace(
                 "show", "tv series"
             ),
-            release_year=get_field(title_data, "release_year"),
-            runtime=get_field(title_data, "runtime"),
-            meta_data=title_data,
+            release_year=get_field(react_context, "release_year"),
+            runtime=get_field(react_context, "runtime"),
+            meta_data=react_context,
         )
         titles.append(title)
 
