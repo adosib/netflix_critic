@@ -2,10 +2,11 @@ import sys
 import json
 import asyncio
 import logging
+import itertools
 from http import HTTPStatus
-from typing import Dict, Optional, Annotated
+from typing import Any, Dict, Optional, Annotated
 from pathlib import Path
-from datetime import datetime, timezone
+from collections import defaultdict
 
 import uvicorn
 import pythonmonkey as pm
@@ -22,7 +23,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 from sqlmodel import Session, select, create_engine
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
@@ -31,6 +32,11 @@ from starlette.middleware.cors import CORSMiddleware
 from netflix_critic_data.scripts.database_setup.backfill_titles import (
     HTMLContent,
     get_field,
+)
+from netflix_critic_data.scripts.database_setup.populate_ratings import (
+    DateTimeEncoder,
+    get_ratings,
+    get_serp_html,
 )
 from netflix_critic_data.scripts.database_setup.populate_availability import (
     SessionHandler,
@@ -216,13 +222,10 @@ def get_all_titles(
             Rating.rating,
         )
         .join(Availability)
-        .join(
-            Rating,
-            (Rating.netflix_id == Title.netflix_id) & (Rating.vendor == "Google users"),
-            isouter=True,
-        )
+        .join(Rating)
         .where(Availability.available)
         .where(Availability.country.in_(available_in))
+        .where(Rating.vendor == "Google users")
     ).all()
     if titles is None:
         raise HTTPException(status_code=404, detail="No titles not found")
@@ -259,106 +262,184 @@ def _sanitize_pythonmonkey_obj(obj):
     elif obj == pm.null:
         return None
     else:
+        if isinstance(obj, float):
+            if obj.is_integer():
+                return int(obj)
         return obj
 
 
 async def fetch_and_process_title(
-    session, title_id, background_tasks: BackgroundTasks
+    title_id: int, session_handler: SessionHandler, background_tasks: BackgroundTasks
 ) -> list[dict]:
     request_url = f"https://www.netflix.com/title/{title_id}"
-    async with session.get(request_url) as response:
-        logger.info(f"Starting request for {request_url}")
-        if response.status not in (200, 301, 302, 404):
-            response.raise_for_status()
+    async with session_handler.limiter:
+        async with session_handler.noauth_session.get(request_url) as response:
+            logger.info(f"Starting request for {request_url}")
+            if response.status not in (200, 301, 302, 404):
+                response.raise_for_status()
 
-        html_content = HTMLContent(await response.text())
-        scripts = find_all_script_elements(html_content)
+            html_content = HTMLContent(await response.text())
+            scripts = find_all_script_elements(html_content)
 
+            background_tasks.add_task(
+                save_response_body,
+                html_content,
+                f"/Users/asibalo/Documents/Dev/PetProjects/netflix_critic_data/data/raw/title/{title_id}.html",
+            )
+
+            for script in scripts:
+                content = script["content"]
+                if content is None:
+                    continue
+                context_def = content.find("reactContext =")
+                if context_def != -1:
+                    try:
+                        react_context = script["content"][context_def:]
+                        return _sanitize_pythonmonkey_obj(
+                            pm.eval(react_context).models.nmTitleUI.data.sectionData
+                        )
+                    except (KeyError, AttributeError, pm.SpiderMonkeyError) as e:
+                        logger.exception(e)
+
+
+async def scrape_serp_for_ratings(
+    netflix_id,
+    title_data,
+    semaphore: asyncio.Semaphore,
+    background_tasks: BackgroundTasks,
+) -> list[dict]:
+    async with semaphore:
+        logger.info(f"Creating APIfy task for {netflix_id}")
+        html_content = await get_serp_html(
+            netflix_id,
+            get_field(title_data, "title"),
+            get_field(title_data, "content_type"),
+            get_field(title_data, "release_year"),
+        )
         background_tasks.add_task(
             save_response_body,
             html_content,
-            f"/Users/asibalo/Documents/Dev/PetProjects/netflix_critic_data/data/raw/title/{title_id}.html",
+            f"/Users/asibalo/Documents/Dev/PetProjects/netflix_critic_data/data/raw/serp/{netflix_id}.html",
         )
-
-        for script in scripts:
-            content = script["content"]
-            if content is None:
-                continue
-            context_def = content.find("reactContext =")
-            if context_def != -1:
-                try:
-                    react_context = script["content"][context_def:]
-                    return _sanitize_pythonmonkey_obj(
-                        pm.eval(react_context).models.nmTitleUI.data.sectionData
-                    )
-                except (KeyError, AttributeError, pm.SpiderMonkeyError) as e:
-                    logger.exception(e)
+        return await get_ratings(netflix_id, html_content)
 
 
-async def download_titlepages(
-    title_ids: list[int], background_tasks: BackgroundTasks
-) -> dict[int, list]:
-    title_data = {}
-    async with SessionHandler() as http_session_handler:
-        async with http_session_handler.limiter:
-            async with asyncio.TaskGroup() as tg:
-                for title_id in title_ids:
-                    title_data[title_id] = tg.create_task(
-                        fetch_and_process_title(
-                            http_session_handler.noauth_session,
-                            title_id,
-                            background_tasks,
-                        ),
-                        name=str(title_id),
-                    )
-    return {k: v.result() for k, v in title_data.items()}
-
-
-@app.post("/api/titles", response_model=Dict[int, TitleResponse])
-async def post_titles(
-    session: SessionDep, payload: list[int], background_tasks: BackgroundTasks
-):
-    titles_data = await download_titlepages(payload, background_tasks)
-
-    titles = []
-    availability = []
-
-    for netflix_id in payload:
-        title_data = titles_data[netflix_id]
-        title = Title(
-            netflix_id=netflix_id,
-            title=get_field(title_data, "title"),
-            content_type=get_field(title_data, "content_type").replace(
-                "show", "tv series"
-            ),
-            release_year=get_field(title_data, "release_year"),
-            runtime=get_field(title_data, "runtime"),
-            meta_data=title_data,
-        )
-        titles.append(title)
-
-        availability.append(
-            Availability(
-                netflix_id=netflix_id,
-                country="US",
-                titlepage_reachable=True,
-                available=True,
-                checked_at=datetime.now(timezone.utc),
-                title=title,
-            )
-        )
-
-    session.exec(Title.bulk_insert_ignore_conflicts(titles))
-    session.exec(Availability.bulk_insert_ignore_conflicts(availability))
-    session.commit()
-
+async def download_title_and_lookup_ratings(
+    title_id,
+    http_session_handler: SessionHandler,
+    semaphore: asyncio.Semaphore,
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    title_data = await fetch_and_process_title(
+        title_id,
+        http_session_handler,
+        background_tasks,
+    )
     return {
-        netflix_id: TitleResponse(
-            **title.model_dump(),
-            rating=0,
-        )
-        for title in titles
+        "netflix_id": title_id,
+        "react_context": title_data,
+        "ratings": await scrape_serp_for_ratings(
+            title_id, title_data, semaphore, background_tasks
+        ),
     }
+
+
+async def stream_ratings(
+    title_ids: list[int], db_session, background_tasks: BackgroundTasks
+):
+    tasks = []
+    results = []
+    semaphore = asyncio.Semaphore(32)
+    http_session_handler = SessionHandler()
+
+    for title_id in title_ids:
+        task = asyncio.create_task(
+            download_title_and_lookup_ratings(
+                title_id, http_session_handler, semaphore, background_tasks
+            ),
+            name=title_id,
+        )
+        task.add_done_callback(
+            lambda t: logger.info(f"Finished task for {t.get_name()}")
+        )
+        tasks.append(task)
+
+    try:
+        # TODO it may be prudent to yield a ': keep-alive' message every so often
+        for completed_coro in asyncio.as_completed(tasks):
+            result = await completed_coro
+            results.append(result)
+
+            result_slim = {k: result[k] for k in ("netflix_id", "ratings")}
+
+            msg = json.dumps(
+                result_slim,
+                separators=(",", ":"),
+                cls=DateTimeEncoder,
+            )
+
+            yield (
+                f"data: {msg}" + "\n\n"
+            )  # https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format
+
+    finally:
+        http_session_handler.close()
+
+        titles = []
+        availability = []
+        ratings = defaultdict(list)
+
+        for result in results:
+            netflix_id = result["netflix_id"]
+            title_data = result["react_context"]
+
+            title = Title(
+                netflix_id=netflix_id,
+                title=get_field(title_data, "title"),
+                content_type=get_field(title_data, "content_type"),
+                release_year=get_field(title_data, "release_year"),
+                runtime=get_field(title_data, "runtime"),
+                meta_data=title_data,
+            )
+            titles.append(title)
+
+            availability.append(
+                Availability(
+                    netflix_id=netflix_id,
+                    country="US",
+                    titlepage_reachable=True,
+                    available=True,
+                    title=title,
+                )
+            )
+
+            for rating in result["ratings"]:
+                ratings[netflix_id].append(
+                    Rating(
+                        netflix_id=netflix_id,
+                        vendor=rating["vendor"],
+                        url=rating["url"],
+                        rating=rating["rating"],
+                        ratings_count=rating["ratings_count"],
+                    )
+                )
+
+        db_session.exec(Title.bulk_insert_ignore_conflicts(titles))
+        db_session.exec(Availability.bulk_insert_ignore_conflicts(availability))
+        db_session.exec(
+            Rating.bulk_insert_ignore_conflicts(itertools.chain(*ratings.values()))
+        )
+        db_session.commit()
+
+
+@app.post("/api/titles")
+async def stream_data(
+    payload: list[int], db_session: SessionDep, background_tasks: BackgroundTasks
+):
+    return StreamingResponse(
+        stream_ratings(payload, db_session, background_tasks),
+        media_type="text/event-stream",
+    )
 
 
 if __name__ == "__main__":
