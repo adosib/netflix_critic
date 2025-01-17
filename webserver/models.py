@@ -5,6 +5,7 @@
 from typing import List, ClassVar, Optional
 from datetime import datetime, timezone
 
+from pydantic import Json
 from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import (
     CHAR,
@@ -83,13 +84,15 @@ class Title(BaseModel, table=True):
     title: Optional[str] = Field(default=None, sa_column=Column("title", String(256)))
     content_type: Optional[str] = Field(
         default=None,
-        sa_column=Column("content_type", Enum("movie", "series", name="content_type")),
+        sa_column=Column(
+            "content_type", Enum("movie", "tv series", name="content_type")
+        ),
     )
     release_year: Optional[int] = Field(
         default=None, sa_column=Column("release_year", Integer)
     )
     runtime: Optional[int] = Field(default=None, sa_column=Column("runtime", Integer))
-    meta_data: Optional[dict] = Field(default=None, sa_column=Column("metadata", JSONB))
+    meta_data: Optional[Json] = Field(default=None, sa_column=Column("metadata", JSONB))
 
     availability: List["Availability"] = Relationship(back_populates="title")
     ratings: List["Rating"] = Relationship(back_populates="title")
