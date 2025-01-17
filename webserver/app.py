@@ -4,11 +4,11 @@ import asyncio
 import logging
 import itertools
 from http import HTTPStatus
+from uuid import uuid4
 from typing import Any, Dict, Optional, Annotated
 from pathlib import Path
 from collections import defaultdict
 
-import uvicorn
 import pythonmonkey as pm
 from bs4 import BeautifulSoup
 from models import Title, Rating, Availability
@@ -23,6 +23,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 from sqlmodel import Session, select, create_engine
+from sqlalchemy import func
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -34,7 +35,6 @@ from netflix_critic_data.scripts.database_setup.backfill_titles import (
     get_field,
 )
 from netflix_critic_data.scripts.database_setup.populate_ratings import (
-    DateTimeEncoder,
     get_ratings,
     get_serp_html,
 )
@@ -51,6 +51,45 @@ DOWNLOADED_TITLEPAGES_DIR = ROOT_DIR / "netflix_critic_data" / "data" / "raw" / 
 DATABASE_URL = "postgresql://localhost:5432/postgres"
 STATUS_REASONS = {x.value: x.name for x in list(HTTPStatus)}
 
+APIFY_SEMAPHORE = asyncio.Semaphore(32)
+
+
+class JobStore:
+    """Data structure to avoid re-processing title IDs that have been processed already."""
+
+    def __init__(self):
+        self._data = defaultdict(list)
+        self._global_values = set()  # Set to enforce global uniqueness of values
+
+    def add(self, key: Any, values: list):
+        """Add a value to a key. Ensure global uniqueness."""
+        if key not in self._data:
+            self._data[key]
+
+        for value in values:
+            if value in self._global_values:
+                continue
+
+            self._data[key].append(value)
+            self._global_values.add(value)
+
+    def get(self, key):
+        """Get all values associated with a key."""
+        return self._data.get(key, [])
+
+    def __setitem__(self, key, value):
+        return self.add(key, value)
+
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def __repr__(self):
+        return repr(self._data)
+
+
+global_job_store = JobStore()
+
+
 app = FastAPI()
 app.mount("/title", StaticFiles(directory=DOWNLOADED_TITLEPAGES_DIR, html=True))
 templates = Jinja2Templates(directory=THIS_DIR / "templates")
@@ -58,10 +97,19 @@ templates = Jinja2Templates(directory=THIS_DIR / "templates")
 # Add CORS middleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
+    allow_credentials=False,
     allow_origins=["*"],  # Or more restricted origins like "https://www.netflix.com"
-    allow_credentials=True,
     allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
+    expose_headers=[
+        "X-Requested-With",
+        "X-HTTP-Method-Override",
+        "Content-Type",
+        "Accept",
+        "Cache-Control",
+        "Connection",
+        "X-Accel-Buffering",
+    ],
 )
 
 
@@ -190,25 +238,55 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 class TitleResponse(BaseModel):
-    id: Optional[int]
-    netflix_id: Optional[int]
-    title: Optional[str]
-    content_type: Optional[str]
-    release_year: Optional[int]
-    runtime: Optional[int]
-    rating: Optional[int]
+    id: Optional[int] = None
+    netflix_id: Optional[int] = None
+    title: Optional[str] = None
+    content_type: Optional[str] = None
+    release_year: Optional[int] = None
+    runtime: Optional[int] = None
+    google_users_rating: Optional[int] = None
+
+    @staticmethod
+    def find_google_users_rating(ratings: list[dict]) -> Optional[int]:
+        for rating in ratings:
+            if rating["vendor"] == "Google users":
+                return rating["rating"]
 
 
-@app.get("/api/title/{title_id}", response_model=Title)
+class TitleResponseDecoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, TitleResponse):
+            return obj.model_dump()
+        return super().default(obj)
+
+
+@app.get("/api/title/{title_id}", response_model=Dict[int, TitleResponse])
 def get_title(title_id: int, session: SessionDep):
-    title = session.exec(select(Title).where(Title.netflix_id == title_id)).first()
+    title = session.exec(
+        select(
+            Title.id,
+            Title.netflix_id,
+            Title.title,
+            Title.content_type,
+            Title.release_year,
+            Title.runtime,
+            Rating.rating.label("google_users_rating"),
+        )
+        .outerjoin(
+            Rating,
+            (Rating.netflix_id == Title.netflix_id) & (Rating.vendor == "Google users"),
+        )
+        .where(Title.netflix_id == title_id)
+    ).first()
+
     if title is None:
         raise HTTPException(status_code=404, detail="Title not found")
-    return title
+
+    return {title.netflix_id: title}
 
 
 @app.get("/api/titles", response_model=Dict[int, TitleResponse])
-def get_all_titles(
+def get_all_available_titles(
     session: SessionDep, available_in: Annotated[list[str] | None, Query()] = ("US",)
 ):
     titles = session.exec(
@@ -219,18 +297,63 @@ def get_all_titles(
             Title.content_type,
             Title.release_year,
             Title.runtime,
-            Rating.rating,
+            # NOTE: included primarily for future reference - didn't really need to aggregate here.
+            # I'm really only after the Google rating (see `get_title` above).
+            func.jsonb_agg(
+                func.jsonb_build_object(
+                    "id",
+                    Rating.id,
+                    "netflix_id",
+                    Rating.netflix_id,
+                    "vendor",
+                    Rating.vendor,
+                    "rating",
+                    Rating.rating,
+                )
+            ).label("ratings"),
         )
         .join(Availability)
         .join(Rating)
         .where(Availability.available)
         .where(Availability.country.in_(available_in))
-        .where(Rating.vendor == "Google users")
+        .group_by(
+            Title.id,
+            Title.netflix_id,
+            Title.title,
+            Title.content_type,
+            Title.release_year,
+            Title.runtime,
+        )
     ).all()
+
     if titles is None:
         raise HTTPException(status_code=404, detail="No titles not found")
-    titles_dict = {title.netflix_id: title for title in titles}
-    return titles_dict
+
+    response_obj = {}
+    for title in titles:
+        title_response = TitleResponse(
+            id=title.id,
+            netflix_id=title.netflix_id,
+            title=title.title,
+            content_type=title.content_type,
+            release_year=title.release_year,
+            runtime=title.runtime,
+            google_users_rating=TitleResponse.find_google_users_rating(title.ratings),
+        )
+        response_obj[title.netflix_id] = title_response
+
+    return response_obj
+
+
+@app.post("/api/titles")
+async def store_title_ids_for_processing(payload: list[int]):
+    job_id = str(uuid4())
+    global_job_store[job_id] = payload
+    return {
+        "job_id": job_id,
+        "payload_sent": payload,
+        "actual_payload_to_submit": global_job_store[job_id],
+    }
 
 
 def find_all_script_elements(html: HTMLContent):
@@ -300,16 +423,18 @@ async def fetch_and_process_title(
                         )
                     except (KeyError, AttributeError, pm.SpiderMonkeyError) as e:
                         logger.exception(e)
+                        return []
 
 
 async def scrape_serp_for_ratings(
     netflix_id,
     title_data,
-    semaphore: asyncio.Semaphore,
     background_tasks: BackgroundTasks,
 ) -> list[dict]:
-    async with semaphore:
+    async with APIFY_SEMAPHORE:
         logger.info(f"Creating APIfy task for {netflix_id}")
+        if not title_data:
+            return []
         html_content = await get_serp_html(
             netflix_id,
             get_field(title_data, "title"),
@@ -327,7 +452,6 @@ async def scrape_serp_for_ratings(
 async def download_title_and_lookup_ratings(
     title_id,
     http_session_handler: SessionHandler,
-    semaphore: asyncio.Semaphore,
     background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
     title_data = await fetch_and_process_title(
@@ -339,23 +463,19 @@ async def download_title_and_lookup_ratings(
         "netflix_id": title_id,
         "react_context": title_data,
         "ratings": await scrape_serp_for_ratings(
-            title_id, title_data, semaphore, background_tasks
+            title_id, title_data, background_tasks
         ),
     }
 
 
-async def stream_ratings(
-    title_ids: list[int], db_session, background_tasks: BackgroundTasks
-):
+async def stream_ratings(job_id: str, db_session, background_tasks: BackgroundTasks):
     tasks = []
-    results = []
-    semaphore = asyncio.Semaphore(32)
     http_session_handler = SessionHandler()
 
-    for title_id in title_ids:
+    for title_id in global_job_store[job_id]:
         task = asyncio.create_task(
             download_title_and_lookup_ratings(
-                title_id, http_session_handler, semaphore, background_tasks
+                title_id, http_session_handler, background_tasks
             ),
             name=title_id,
         )
@@ -365,31 +485,14 @@ async def stream_ratings(
         tasks.append(task)
 
     try:
-        # TODO it may be prudent to yield a ': keep-alive' message every so often
-        for completed_coro in asyncio.as_completed(tasks):
-            result = await completed_coro
-            results.append(result)
-
-            result_slim = {k: result[k] for k in ("netflix_id", "ratings")}
-
-            msg = json.dumps(
-                result_slim,
-                separators=(",", ":"),
-                cls=DateTimeEncoder,
-            )
-
-            yield (
-                f"data: {msg}" + "\n\n"
-            )  # https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format
-
-    finally:
-        http_session_handler.close()
-
         titles = []
         availability = []
         ratings = defaultdict(list)
 
-        for result in results:
+        # TODO it may be prudent to yield a ': keep-alive' message every so often
+        for completed_coro in asyncio.as_completed(tasks):
+            result = await completed_coro
+
             netflix_id = result["netflix_id"]
             title_data = result["react_context"]
 
@@ -409,7 +512,6 @@ async def stream_ratings(
                     country="US",
                     titlepage_reachable=True,
                     available=True,
-                    title=title,
                 )
             )
 
@@ -424,6 +526,25 @@ async def stream_ratings(
                     )
                 )
 
+            title_response = TitleResponse(
+                **title.model_dump(),
+                google_users_rating=TitleResponse.find_google_users_rating(
+                    result["ratings"]
+                ),
+            )
+            msg = json.dumps(
+                {title.netflix_id: title_response},
+                separators=(",", ":"),
+                cls=TitleResponseDecoder,
+            )
+
+            yield (
+                f"data: {msg}" + "\n\n"
+            )  # https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format
+
+    finally:
+        await http_session_handler.close()
+
         db_session.exec(Title.bulk_insert_ignore_conflicts(titles))
         db_session.exec(Availability.bulk_insert_ignore_conflicts(availability))
         db_session.exec(
@@ -432,15 +553,11 @@ async def stream_ratings(
         db_session.commit()
 
 
-@app.post("/api/titles")
+@app.get("/api/stream/{job_id}", response_model=Dict[int, TitleResponse])
 async def stream_data(
-    payload: list[int], db_session: SessionDep, background_tasks: BackgroundTasks
+    job_id: str, db_session: SessionDep, background_tasks: BackgroundTasks
 ):
     return StreamingResponse(
-        stream_ratings(payload, db_session, background_tasks),
+        stream_ratings(job_id, db_session, background_tasks),
         media_type="text/event-stream",
     )
-
-
-if __name__ == "__main__":
-    uvicorn.run(app, log_level="info")
