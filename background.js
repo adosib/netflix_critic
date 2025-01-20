@@ -1,5 +1,6 @@
 let payload = new Set();
 let sendTimeout = null;
+const eventSources = new Map(); // To track active EventSource instances
 
 chrome.commands.onCommand.addListener((shortcut) => { // TODO remove
     if(shortcut.includes("+M")) {
@@ -10,15 +11,12 @@ chrome.commands.onCommand.addListener((shortcut) => { // TODO remove
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'missingTitleData') {
-        // Add data to the payload
         payload.add(message.netflixId);
 
-        // Clear the existing timeout if any
         if (sendTimeout) {
             clearTimeout(sendTimeout);
         }
 
-        // Set a new timeout to send the payload after 1 second
         sendTimeout = setTimeout(() => {
             sendPayload();
         }, 1000);
@@ -28,8 +26,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function sendPayload() {
     if (payload.size === 0) return;
 
-    const dataToSend = Array.from(payload); // Copy the current payload
-    payload = new Set(); // Clear the payload
+    const dataToSend = Array.from(payload);
+    payload = new Set();
 
     fetch('http://localhost:8000/api/titles', {
         method: 'POST',
@@ -38,12 +36,41 @@ function sendPayload() {
         },
         body: JSON.stringify(dataToSend),
     })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Payload sent successfully:', data);
-            chrome.storage.local.set(data);
-        })
-        .catch(error => {
-            console.error('Error sending payload:', error);
-        });
+    .then((response) => {
+        if (!response.ok) {
+            throw new Error(`Failed to send payload: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then((data) => {
+
+        console.log('Payload sent successfully:', dataToSend);
+
+        const jobId = data.job_id;
+        const eventSource = new EventSource(
+            `http://localhost:8000/api/stream/${jobId}`
+        );
+
+        eventSource.onmessage = (event) => {
+            try {
+                const parsedData = JSON.parse(event.data);
+                console.log(`Received data for jobId ${jobId}:`, parsedData);
+                chrome.storage.local.set(parsedData);
+            } catch (error) {
+                console.error('Error parsing incoming data:', error);
+            }
+        };
+
+        eventSource.onerror = (err) => {
+            console.error(`SSE connection error for job_id ${jobId}:`, err);
+            eventSource.close();
+            eventSources.delete(jobId);
+        };
+
+        eventSources.set(jobId, eventSource);
+
+    })
+    .catch((error) => {
+        console.error('Error sending payload:', error);
+    });
 }
