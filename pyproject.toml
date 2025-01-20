@@ -9,18 +9,18 @@ dependencies = [
     "aiohttp>=3.10.10",
     "aiolimiter>=1.2.0",
     "beautifulsoup4>=4.12.3",
-    "psycopg[binary]>=3.2.3",
-    "requests>=2.32.3",
+    "fastapi[standard]>=0.115.6",
+    "minify-html>=0.15.0",
+    "pythonmonkey>=1.1.0",
     "sqlmodel>=0.0.22",
+    "apify-client>=1.8.1",
+    "psycopg[binary]>=3.2.4",
 ]
 
 [dependency-groups]
 dev = [
-    "apify-client>=1.8.1",
-    "fastapi[standard]>=0.115.5",
     "matplotlib>=3.9.3",
     "pandas>=2.2.3",
-    "psycopg2-binary>=2.9.10",
     "pytest-playwright>=0.6.2",
     "sqlacodegen>=3.0.0rc5",
 ]
