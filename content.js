@@ -2,7 +2,7 @@
 (async function() {
     console.log("Chrome extension 'Netflix Critic' activated");
 
-    chrome.storage.local.clear(); // TODO remove
+    // chrome.storage.local.clear(); // TODO remove
     
     // TODO probably move all this stuff to the background
     try {
@@ -128,46 +128,60 @@ class TitleCard {
         if (this.#rating) {
             return Promise.resolve(this.#rating);
         }
-        return this.getProperty("rating").then((rating) => {
+        return this.getProperty("google_users_rating").then((rating) => {
             this.#rating = rating; // Cache the rating
             return rating;
         });
     }
 
-    async #lookup(){
+    async #lookup() {
         const key = this.netflixId.toString();
-
-        return new Promise((resolve) => {
+        const timeout = 120 * 1000;
+        const interval = 0.5 * 1000;
+    
+        // Helper function: Check chrome.storage for the cached data
+        const getCachedData = async () => {
+            const cachedData = await chrome.storage.local.get(key);
+            return Object.keys(cachedData).length > 0 ? cachedData[key] : null;
+        };
+    
+        // Helper function: Set up polling with timeout
+        const pollForData = (resolve, reject) => {
             let elapsed = 0;
-            const interval = 500;
-            const timeout = 30000;
-
-            const checkStorage = async () => {
-                const cachedData = await chrome.storage.local.get(key);
-                if (Object.keys(cachedData).length > 0) {
-                    clearInterval(intervalId);
-                    resolve(cachedData[key]);
-                }
-            };
-
+    
             const intervalId = setInterval(async () => {
                 elapsed += interval;
+    
+                const data = await getCachedData();
+                if (data) {
+                    clearInterval(intervalId);
+                    resolve(data);
+                    return;
+                }
+    
                 if (elapsed >= timeout) {
                     clearInterval(intervalId);
                     console.warn(`Timeout reached for title ID ${this.netflixId}`);
                     resolve(null);
-                    return;
                 }
-                await checkStorage();
-            }, interval);
 
-            checkStorage();
-            chrome.runtime.sendMessage({
-                type: 'missingTitleData',
-                netflixId: this.netflixId
-            });
+            }, interval);
+        };
+    
+        // Main execution
+        const cachedData = await getCachedData();
+        if (cachedData) return cachedData; // Return immediately if data exists
+    
+        // Notify background script to fetch the data
+        chrome.runtime.sendMessage({
+            type: 'missingTitleData',
+            netflixId: this.netflixId
         });
+    
+        // Poll for data and handle timeout
+        return new Promise(pollForData);
     }
+    
 
 }
 
@@ -199,7 +213,8 @@ async function reloadDOM(){
         // Exclude live/upcoming
         ':not([data-list-context="configbased_liveandupcomingepisodes"])'+
         // Exclude mobile games
-        ':not([data-list-context="configbased_mobilepersonalizedgames"])'
+        ':not([data-list-context="configbased_mobilepersonalizedgames"])'+
+        ':not([data-list-context="configbased_cloudpersonalizedgames"])'
     );
 
     for (const lolomoRow of lolomoRows){
