@@ -208,13 +208,16 @@ function getColorForValue(value) {
 
 
 async function reloadDOM(){
-    let lolomoRows = document.querySelectorAll(
-        '.lolomoRow'+
+    const exclusions = (
         // Exclude live/upcoming
         ':not([data-list-context="configbased_liveandupcomingepisodes"])'+
         // Exclude mobile games
         ':not([data-list-context="configbased_mobilepersonalizedgames"])'+
         ':not([data-list-context="configbased_cloudpersonalizedgames"])'
+    )
+    let lolomoRows = document.querySelectorAll(
+        '.lolomoRow' + exclusions + ', ' +
+        '.rowContainer' + exclusions
     );
 
     for (const lolomoRow of lolomoRows){
