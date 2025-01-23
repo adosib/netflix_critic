@@ -13,7 +13,6 @@ dependencies = [
     "minify-html>=0.15.0",
     "pythonmonkey>=1.1.0",
     "sqlmodel>=0.0.22",
-    "apify-client>=1.8.1",
     "psycopg[binary]>=3.2.4",
     "hypercorn[h3,uvloop]>=0.17.3",
     "aioquic>=0.9.25",
