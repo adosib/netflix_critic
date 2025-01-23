@@ -3,7 +3,7 @@
 *.env
 config*
 api_key.txt
-logs/*
+**/logs
 data/*
 .venv/*
 **__pycache__**

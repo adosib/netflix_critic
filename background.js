@@ -1,6 +1,7 @@
 let payload = new Set();
 let sendTimeout = null;
 const eventSources = new Map(); // To track active EventSource instances
+const BASE_URL = "http://localhost:80";
 
 chrome.commands.onCommand.addListener((shortcut) => { // TODO remove
     if(shortcut.includes("+M")) {
@@ -29,7 +30,7 @@ function sendPayload() {
     const dataToSend = Array.from(payload);
     payload = new Set();
 
-    fetch('http://localhost:8000/api/titles', {
+    fetch(`${BASE_URL}/api/titles`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -48,7 +49,7 @@ function sendPayload() {
 
         const jobId = data.job_id;
         const eventSource = new EventSource(
-            `http://localhost:8000/api/stream/${jobId}`
+            `${BASE_URL}/api/stream/${jobId}`
         );
 
         eventSource.onmessage = (event) => {

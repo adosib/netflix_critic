@@ -1,3 +1,4 @@
+import os
 import json
 import asyncio
 import itertools
@@ -7,7 +8,20 @@ from typing import Any, Dict, Optional, Annotated
 from pathlib import Path
 from collections import defaultdict
 
+import aiohttp
 import app_logger
+from common import (
+    JobStore,
+    HTMLContent,
+    NetflixSessionHandler,
+    ContextExtractionError,
+    BrightDataSessionHandler,
+    get_field,
+    get_serp_html,
+    configure_logger,
+    save_response_body,
+    extract_netflix_react_context,
+)
 from models import Title, Rating, Availability
 from fastapi import (
     Query,
@@ -27,34 +41,23 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
 
-from netflix_critic_data.scripts.database_setup.common import (
-    JobStore,
-    HTMLContent,
-    HttpSessionHandler,
-    ContextExtractionError,
-    get_field,
-    get_ratings,
-    get_serp_html,
-    configure_logger,
-    save_response_body,
-    extract_netflix_react_context,
-)
-
 THIS_DIR = Path(__file__).parent
-ROOT_DIR, *_ = [
-    parent for parent in THIS_DIR.parents if parent.stem == "netflix_critic"
-]
+ROOT_DIR = THIS_DIR.parent
 DOWNLOADED_TITLEPAGES_DIR = ROOT_DIR / "data" / "raw" / "title"  # TODO
 DOWNLOADED_SERP_PAGES_DIR = ROOT_DIR / "data" / "raw" / "serp"  # TODO
-DATABASE_URL = "postgresql+psycopg://localhost:5432/postgres"
+
 STATUS_REASONS = {x.value: x.name for x in list(HTTPStatus)}
 
-APIFY_SEMAPHORE = asyncio.Semaphore(32)
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", 5432)
+POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
+DATABASE_URL = f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
-global_job_store = JobStore()
 
 engine = create_engine(DATABASE_URL, echo=True)
-
+global_job_store = JobStore()
 app = FastAPI()
 app.mount("/title", StaticFiles(directory=DOWNLOADED_TITLEPAGES_DIR, html=True))
 templates = Jinja2Templates(directory=THIS_DIR / "templates")
@@ -80,7 +83,7 @@ app.add_middleware(
 
 formatter = app_logger.CustomJSONFormatter("%(asctime)s")
 logger = app_logger.get_logger(
-    __name__, formatter, fileout=(ROOT_DIR / "logs" / f"{Path(__file__).stem}.log")
+    __name__, formatter, fileout=(THIS_DIR / "logs" / f"{Path(__file__).stem}.log")
 )
 configure_logger(logger)
 
@@ -276,80 +279,88 @@ async def store_title_ids_for_processing(payload: list[int]):
 
 async def fetch_and_process_title(
     title_id: int,
-    session_handler: HttpSessionHandler,
+    session_handler: NetflixSessionHandler,
     background_tasks: BackgroundTasks,
 ) -> list[dict]:
-    request_url = f"https://www.netflix.com/title/{title_id}"
+    request_path = f"title/{title_id}"
     async with session_handler.limiter:
-        async with session_handler.noauth_session.get(request_url) as response:
-            logger.info(f"Starting request for {request_url}")
-            if response.status not in (200, 301, 302, 404):
-                response.raise_for_status()
+        try:
+            async with session_handler.noauth_session.get(request_path) as response:
+                logger.info(f"Starting request for {request_path}")
+                if response.status not in (200, 301, 302, 404):
+                    response.raise_for_status()
 
-            html_content = HTMLContent(await response.text())
+                html_content = HTMLContent(await response.text())
 
-            background_tasks.add_task(
-                save_response_body,
-                html_content,
-                DOWNLOADED_TITLEPAGES_DIR / f"{title_id}.html",
-            )
+                background_tasks.add_task(
+                    save_response_body,
+                    html_content,
+                    DOWNLOADED_TITLEPAGES_DIR / f"{title_id}.html",
+                )
 
-            try:
                 return extract_netflix_react_context(html_content)
-            except ContextExtractionError:
-                return []
+
+        except (ContextExtractionError, aiohttp.ConnectionTimeoutError) as e:
+            logger.exception(e)
+            return []
 
 
 async def scrape_serp_for_ratings(
     netflix_id,
     title_data,
+    brd_session_handler: BrightDataSessionHandler,
     background_tasks: BackgroundTasks,
 ) -> list[dict]:
-    async with APIFY_SEMAPHORE:
-        logger.info(f"Creating APIfy task for {netflix_id}")
+    async with brd_session_handler.limiter:
+        logger.info(f"Attempting to get SERP reviews for {netflix_id}")
         if not title_data:
             return []
-        html_content = await get_serp_html(
+        serp_response = await get_serp_html(
             netflix_id,
             get_field(title_data, "title"),
             get_field(title_data, "content_type"),
             get_field(title_data, "release_year"),
+            session=brd_session_handler.choose_session(),
         )
         background_tasks.add_task(
             save_response_body,
-            html_content,
+            serp_response.html,
             DOWNLOADED_SERP_PAGES_DIR / f"{netflix_id}.html",
         )
-        return await get_ratings(netflix_id, html_content)
+        return [rating.__dict__ for rating in serp_response.ratings]
 
 
 async def download_title_and_lookup_ratings(
     title_id,
-    http_session_handler: HttpSessionHandler,
+    nflx_session_handler: NetflixSessionHandler,
+    brd_session_handler: BrightDataSessionHandler,
     background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
     title_data = await fetch_and_process_title(
         title_id,
-        http_session_handler,
+        nflx_session_handler,
         background_tasks,
     )
     return {
         "netflix_id": title_id,
         "react_context": title_data,
         "ratings": await scrape_serp_for_ratings(
-            title_id, title_data, background_tasks
+            title_id, title_data, brd_session_handler, background_tasks
         ),
     }
 
 
-async def stream_ratings(job_id: str, db_session, background_tasks: BackgroundTasks):
+async def stream_ratings(
+    job_id: str, db_session: DatabaseSessionDep, background_tasks: BackgroundTasks
+):
     tasks = []
-    http_session_handler = HttpSessionHandler()
+    nflx_session_handler = NetflixSessionHandler()
+    brd_session_handler = BrightDataSessionHandler()
 
     for title_id in global_job_store[job_id]:
         task = asyncio.create_task(
             download_title_and_lookup_ratings(
-                title_id, http_session_handler, background_tasks
+                title_id, nflx_session_handler, brd_session_handler, background_tasks
             ),
             name=title_id,
         )
@@ -417,7 +428,8 @@ async def stream_ratings(job_id: str, db_session, background_tasks: BackgroundTa
             )  # https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format
 
     finally:
-        await http_session_handler.close()
+        await nflx_session_handler.close()
+        await brd_session_handler.close()
 
         db_session.exec(Title.bulk_insert_ignore_conflicts(titles))
         db_session.exec(Availability.bulk_insert_ignore_conflicts(availability))
