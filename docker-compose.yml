@@ -19,6 +19,8 @@ services:
     build:
       context: .
       dockerfile: Webserver.dockerfile
+    ports:
+      - "80:80"
     depends_on:
       - postgres
     working_dir: /app
