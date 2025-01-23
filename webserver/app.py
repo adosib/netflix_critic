@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Annotated
 from pathlib import Path
 from collections import defaultdict
 
+import aiohttp
 import app_logger
 from common import (
     JobStore,
@@ -283,23 +284,25 @@ async def fetch_and_process_title(
 ) -> list[dict]:
     request_path = f"title/{title_id}"
     async with session_handler.limiter:
-        async with session_handler.noauth_session.get(request_path) as response:
-            logger.info(f"Starting request for {request_path}")
-            if response.status not in (200, 301, 302, 404):
-                response.raise_for_status()
+        try:
+            async with session_handler.noauth_session.get(request_path) as response:
+                logger.info(f"Starting request for {request_path}")
+                if response.status not in (200, 301, 302, 404):
+                    response.raise_for_status()
 
-            html_content = HTMLContent(await response.text())
+                html_content = HTMLContent(await response.text())
 
-            background_tasks.add_task(
-                save_response_body,
-                html_content,
-                DOWNLOADED_TITLEPAGES_DIR / f"{title_id}.html",
-            )
+                background_tasks.add_task(
+                    save_response_body,
+                    html_content,
+                    DOWNLOADED_TITLEPAGES_DIR / f"{title_id}.html",
+                )
 
-            try:
                 return extract_netflix_react_context(html_content)
-            except ContextExtractionError:
-                return []
+
+        except (ContextExtractionError, aiohttp.ConnectionTimeoutError) as e:
+            logger.exception(e)
+            return []
 
 
 async def scrape_serp_for_ratings(
