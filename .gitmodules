@@ -1,3 +1,6 @@
 [submodule "netflix_critic_data"]
 	path = netflix_critic_data
 	url = https://github.com/adosib/netflix_critic_data
+[submodule "hypercorn-fastapi-docker"]
+	path = hypercorn-fastapi-docker
+	url = https://github.com/adosib/hypercorn-fastapi-docker
