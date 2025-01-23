@@ -23,7 +23,19 @@ That's why I've put in the extra effort to collect that coveted percentage you s
 The extension isn't stand-alone because it depends on the web server (and the Postgres database) to pull data from, so at a minimum you'll need to have [Docker](https://www.docker.com/get-started/) installed.
 
 Once you have Docker installed, open a terminal from the project root directory and run 
-`docker compose up`
+`docker compose up` after which your local webserver and database will be up and running.
+
+Next you just have to add the extension:
+1. Open a browser and go to chrome://extensions/
+2. Toggle 'Developer mode'
+3. Load unpacked extension
+4. Select the extension-core directory
+
+At this point you should be set. Now you can browse Netflix, enhanced with ratings.
+
+<p align="center">
+<img src="./assets/install-extension.gif" />
+</p>
 
 ### Collecting Ratings Data
 Optional: If you additionally want to actively pull down ratings data for titles that aren't readily available in the database, you should be able to get a free trial with some credits for the [Bright Data SERP API](https://brightdata.com/products/serp-api).
@@ -35,12 +47,13 @@ Once you've signed up all you need to do is create a .env file at the project ro
 ```
 BRD_AUTH_TOKEN=...
 ```
-<small style="margin: 0; padding: 0;">Your caption text here</small>
+*<path/to/netlfix_critic/.env*
 
 ## Learnings
-
+[TODO]
 
 ## Loose Ends
+[TODO]
 - I'd love to include a Reddit sentiment score as part of this. I find Reddit threads to be even more reliable than Google user reviews.
 - Testing is non-existent.
 - Error handling could use some improvement.
