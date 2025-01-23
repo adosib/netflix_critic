@@ -4,9 +4,9 @@
   "version": "0.0.1",
   "author": "Abdulah Sibalo",
   "description": "An extension to add ratings data to the Netflix user interface.",
-  "icons": {"16": "assets/netflix_logo.png",
-            "48": "assets/netflix_logo.png",
-            "128": "assets/netflix_logo.png" },
+  "icons": {"16": "assets/netflix-critic-logo.png",
+            "48": "assets/netflix-critic-logo.png",
+            "128": "assets/netflix-critic-logo.png" },
   "permissions": [
     "tabs",
     "storage",
