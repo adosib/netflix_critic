@@ -1,4 +1,4 @@
-
+const BASE_URL = "http://localhost:80";
 (async function() {
     console.log("Chrome extension 'Netflix Critic' activated");
 
@@ -7,7 +7,7 @@
     // TODO probably move all this stuff to the background
     try {
         // Await the fetch operation and handle errors
-        const data = await getData("http://localhost:8000/api/titles");
+        const data = await getData(`${BASE_URL}/api/titles`);
         
         // Check if data exists before proceeding
         if (data) {
