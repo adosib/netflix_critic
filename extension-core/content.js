@@ -214,37 +214,44 @@ async function reloadDOM(){
         // Exclude mobile games
         ':not([data-list-context="configbased_mobilepersonalizedgames"])'+
         ':not([data-list-context="configbased_cloudpersonalizedgames"])'
-    )
+    );
+    const titleCardQuery = (
+        '.title-card-container'+
+        ':not([data-netflix-critic-processed="true"])'
+    );
+
     let lolomoRows = document.querySelectorAll(
         '.lolomoRow' + exclusions + ', ' +
         '.rowContainer' + exclusions
     );
+    let titleCardsArr = [];
 
     for (const lolomoRow of lolomoRows){
+        titleCardsArr.push(...lolomoRow.querySelectorAll(titleCardQuery));
+    }
+    if(lolomoRows.length === 0){
+        // This is a fall-back because I want the exclusions, otherwise I would just
+        // call this and be done with it
+        titleCardsArr.push(...document.querySelectorAll(titleCardQuery));
+    }
+    
+    for(const titleCard of titleCardsArr){
+        let title = new TitleCard(titleCard);
+        
+        const ratingDiv = document.createElement('div');
+        ratingDiv.className = "netflix-critic";
+        
+        const ratingSpinnerDiv = document.createElement('div');
+        ratingSpinnerDiv.className = 'spinner';
 
-        let titleCardsArr = lolomoRow.querySelectorAll(
-            '.title-card-container'+
-            ':not([data-netflix-critic-processed="true"])'
-        );
+        ratingDiv.appendChild(ratingSpinnerDiv)
+        title.divElement.appendChild(ratingDiv);
 
-        for(const titleCard of titleCardsArr){
-            let title = new TitleCard(titleCard);
-            
-            const ratingDiv = document.createElement('div');
-            ratingDiv.className = "netflix-critic";
-            
-            const ratingSpinnerDiv = document.createElement('div');
-            ratingSpinnerDiv.className = 'spinner';
-
-            ratingDiv.appendChild(ratingSpinnerDiv)
-            title.divElement.appendChild(ratingDiv);
-
-            title.googleRating.then((rating) => {
-                ratingSpinnerDiv.remove();
-                ratingDiv.style.color = getColorForValue(rating);
-                ratingDiv.innerHTML = `<p>${rating || "N/A"}</p>`;
-            });
-            
-        }
+        title.googleRating.then((rating) => {
+            ratingSpinnerDiv.remove();
+            ratingDiv.style.color = getColorForValue(rating);
+            ratingDiv.innerHTML = `<p>${rating || "N/A"}</p>`;
+        });
+        
     }
 }
