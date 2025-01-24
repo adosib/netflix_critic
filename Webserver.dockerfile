@@ -16,6 +16,9 @@ COPY ./webserver/app_logger.py /app/app_logger.py
 COPY ./webserver/app.py /app/app.py
 COPY ./webserver/models.py /app/models.py
 
+RUN mkdir -p /app/data/raw/title
+RUN mkdir -p /app/data/raw/serp
+
 # Install Node.js and npm (required for PythonMonkey)
 RUN apt-get update && apt-get install -y npm
 
