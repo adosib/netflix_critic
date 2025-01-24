@@ -5,6 +5,8 @@ config*
 api_key.txt
 **/logs
 data/*
+!data/pg_dump
+data/pg_dump/Fd
 .venv/*
 **__pycache__**
 node_modules/*
