@@ -26,7 +26,7 @@ First things first, clone this repo:
 
 The extension isn't stand-alone because it depends on the web server (and the Postgres database) to pull data from, so at a minimum you'll need to have [Docker](https://www.docker.com/get-started/) installed.
 
-Once you have Docker installed, open a terminal from the project root directory and run 
+Once you have Docker installed, open a terminal **from the project root directory** and run 
 `docker compose up` after which your local webserver and database will be up and running.
 
 Next you just have to add the extension:
@@ -60,6 +60,8 @@ ENV BRD_ZONE=...
 
 ## Learnings
 [TODO]
+- `pg_restore` really does not like having the environment variable `PHOST` set
+- When using SSEs with [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource), you might lose a day debugging if you don't know that `EventSource` really likes endpoints that unambiguously return the mime type `text/event-stream` with an OPTIONS request
 
 ## Loose Ends
 [TODO]
@@ -73,3 +75,4 @@ ENV BRD_ZONE=...
 Useful commands for (my) reference:
 - `pg_dump -Fc -Z zstd:22 -f data/pg_dump/Fc/pg.dump`
 - update all submodules `git submodule foreach git pull --ff origin main`
+- To debug a container setup, this is a useful command to keep it running indefinitely (to allow for e.g. inspecting the directory structure, etc.): `CMD ["sh", "-c", "while true; do sleep 1000; done"]`
