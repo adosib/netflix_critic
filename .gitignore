@@ -7,6 +7,7 @@ api_key.txt
 data/*
 !data/pg_dump
 data/pg_dump/Fd
+data/pg_dump/Ft
 .venv/*
 **__pycache__**
 node_modules/*

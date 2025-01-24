@@ -12,7 +12,7 @@ services:
       PGUSER: postgres
       PGPORT: 5432
     volumes:
-      - ./data/pg_dump/Ft:/data/pg_dump/Ft
+      - ./data/pg_dump:/data/pg_dump
 
   app:
     container_name: nc-python

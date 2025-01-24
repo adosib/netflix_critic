@@ -64,4 +64,8 @@ ENV BRD_ZONE=...
 - Error handling could use some improvement.
 - The data in the titles table needs to be cleaned up. There's a lot of "titles" in there that actually correspond to seasons and episodes. It poisons the data model (mixed entities).
 - The `Availability` model (table) has a `country` attribute but right now all connections are just assumed to be US... the country code could be intercepted from e.g. `netflix.reactContext.models.geo.data.requestCountry` and sent as a query parameter when POSTing to /api/titles in the background script.
-- 
+
+## Misc
+Useful commands for (my) reference:
+- `pg_dump -Fc -Z zstd:22 -f data/pg_dump/Fc/pg.dump`
+- update all submodules `git submodule foreach git pull --ff origin main`
