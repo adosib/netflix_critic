@@ -13,6 +13,8 @@ services:
       PGPORT: 5432
     volumes:
       - ./data/pg_dump:/data/pg_dump
+      - ./data/raw/title:/data/raw/title
+      - ./data/raw/serp:/data/raw/serp
 
   app:
     container_name: nc-python
