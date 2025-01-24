@@ -26,7 +26,7 @@ Once you have Docker installed, open a terminal from the project root directory 
 `docker compose up` after which your local webserver and database will be up and running.
 
 Next you just have to add the extension:
-1. Open a browser and go to chrome://extensions/
+1. Open a browser and navigate to chrome://extensions/
 2. Toggle 'Developer mode'
 3. Load unpacked extension
 4. Select the extension-core directory
@@ -47,7 +47,12 @@ Once you've signed up all you need to do is create a .env file at the project ro
 ```
 BRD_AUTH_TOKEN=...
 ```
-*<path/to/netlfix_critic/.env*
+*path/to/netflix_critic/.env*
+
+If your zone is called something different from 'serp_api1' then you'll have to set that environment variable, too. You can add the following near the other ENV declarations in the [Webserver.dockerfile](./Webserver.dockerfile):
+```
+ENV BRD_ZONE=...
+```
 
 ## Learnings
 [TODO]
