@@ -1,5 +1,6 @@
 # Netflix Critic 🕵️
 
+
 ## Demo
 <p align="center">
 <img src="./assets/critic-demo.gif" />
@@ -20,6 +21,9 @@ That's why I've put in the extra effort to collect that coveted percentage you s
 </p>
 
 ## Running Locally
+First things first, clone this repo:
+`git clone --recurse-submodules https://github.com/adosib/netflix_critic.git`
+
 The extension isn't stand-alone because it depends on the web server (and the Postgres database) to pull data from, so at a minimum you'll need to have [Docker](https://www.docker.com/get-started/) installed.
 
 Once you have Docker installed, open a terminal from the project root directory and run 
