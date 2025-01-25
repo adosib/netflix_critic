@@ -10,19 +10,26 @@
   "permissions": [
     "tabs",
     "storage",
+    "scripting",
+    "activeTab",
     "management"
+  ],
+  "host_permissions": [
+    "https://www.netflix.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [{
-    "matches": [
-      "*://*.netflix.com/*"
-    ],
-    "js": ["content.js"],
-    "css": ["styles.css"],
-    "runs_at": "document_start"
-  }],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.netflix.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_start"
+    }
+],
   "commands": {
     "Ctrl+M": {
         "suggested_key": {
