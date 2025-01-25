@@ -58,6 +58,7 @@ DATABASE_URL = f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTG
 
 engine = create_engine(DATABASE_URL, echo=True)
 global_job_store = JobStore()
+country = "US"
 app = FastAPI()
 app.mount("/title", StaticFiles(directory=DOWNLOADED_TITLEPAGES_DIR, html=True))
 templates = Jinja2Templates(directory=THIS_DIR / "templates")
@@ -206,10 +207,7 @@ def get_title(title_id: int, session: DatabaseSessionDep):
 
 
 @app.get("/api/titles", response_model=Dict[int, TitleResponse])
-def get_all_available_titles(
-    session: DatabaseSessionDep,
-    available_in: Annotated[list[str] | None, Query()] = ("US",),
-):
+def get_all_available_titles(session: DatabaseSessionDep):
     titles = session.exec(
         select(
             Title.id,
@@ -236,7 +234,6 @@ def get_all_available_titles(
         .join(Availability)
         .join(Rating)
         .where(Availability.available)
-        .where(Availability.country.in_(available_in))
         .group_by(
             Title.id,
             Title.netflix_id,
@@ -267,11 +264,15 @@ def get_all_available_titles(
 
 
 @app.post("/api/titles", response_model=TitlesPostedResponse)
-async def store_title_ids_for_processing(payload: list[int]):
+async def store_title_ids_for_processing(
+    payload: list[int], country: Annotated[str | None, Query()] = "US"
+):
+    country = country
     job_id = str(uuid4())
     global_job_store[job_id] = payload
     return {
         "job_id": job_id,
+        "country": country,
         "payload_sent": payload,
         "actual_payload_to_submit": global_job_store[job_id],
     }
@@ -394,7 +395,7 @@ async def stream_ratings(
             availability.append(
                 Availability(
                     netflix_id=netflix_id,
-                    country="US",
+                    country=country,
                     titlepage_reachable=True,
                     available=True,
                 )

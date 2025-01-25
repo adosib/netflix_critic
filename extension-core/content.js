@@ -1,15 +1,15 @@
 const BASE_URL = "http://localhost:80";
+
 (async function() {
     console.log("Chrome extension 'Netflix Critic' activated");
-
-    // chrome.storage.local.clear(); // TODO remove
+    chrome.runtime.sendMessage({
+        type: 'activated'
+    });
     
-    // TODO probably move all this stuff to the background
     try {
         // Await the fetch operation and handle errors
         const data = await getData(`${BASE_URL}/api/titles`);
         
-        // Check if data exists before proceeding
         if (data) {
             chrome.storage.local.set(data);
         } else {
@@ -219,10 +219,10 @@ async function reloadDOM(){
         ':not([data-netflix-critic-processed="true"])'
     );
 
-    let lolomoRows = document.querySelectorAll(
-        '.lolomoRow' + exclusions + ', ' +
-        '.rowContainer' + exclusions
-    );
+    let lolomoRows = document.querySelectorAll('.lolomoRow' + exclusions);
+    if(lolomoRows.length === 0){
+        lolomoRows = document.querySelectorAll('.rowContainer' + exclusions);
+    }
     let titleCardsArr = [];
 
     for (const lolomoRow of lolomoRows){
@@ -233,7 +233,7 @@ async function reloadDOM(){
         // call this and be done with it
         titleCardsArr.push(...document.querySelectorAll(titleCardQuery));
     }
-    
+
     for(const titleCard of titleCardsArr){
         let title = new TitleCard(titleCard);
         

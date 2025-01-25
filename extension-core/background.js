@@ -11,6 +11,7 @@ chrome.commands.onCommand.addListener((shortcut) => { // TODO remove
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    
     if (message.type === 'missingTitleData') {
         payload.add(message.netflixId);
 
@@ -22,6 +23,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendPayload();
         }, 1000);
     }
+    else if (message.type === 'activated') {
+        chrome.scripting.executeScript({
+            target : {tabId : sender.tab.id},
+            func: () => {
+                let country = 'US';
+                try {
+                    country = netflix.reactContext.models.geo.data.requestCountry.id;
+                } catch (error) {
+                    console.error(error);
+                }
+                return country;
+            },
+            // https://developer.chrome.com/docs/extensions/reference/api/scripting#type-ExecutionWorld
+            world: "MAIN"
+        }).then(injectionResults => {
+            for (const {frameId, result} of injectionResults) {
+              chrome.storage.local.set({"COUNTRY": result});
+            }
+        });
+    }
 });
 
 function sendPayload() {
@@ -30,12 +51,14 @@ function sendPayload() {
     const dataToSend = Array.from(payload);
     payload = new Set();
 
-    fetch(`${BASE_URL}/api/titles`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(dataToSend),
+    chrome.storage.local.get({"COUNTRY": "US"}).then((country) => {
+        return fetch(`${BASE_URL}/api/titles?` + new URLSearchParams({country: country["COUNTRY"]}).toString(), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(dataToSend),
+        })
     })
     .then((response) => {
         if (!response.ok) {
