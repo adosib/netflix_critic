@@ -12,9 +12,9 @@ I sometimes spend up to half an hour looking for something to watch on Netflix. 
 ### Ratings
 Ratings are usually a pretty good signal of quality — you can be reasonably certain you'll enjoy a show or movie that's been rated 9/10 by other viewers, unless you have some really niche taste or you're one of those contrarians types.
 
-But why specifically the 'Google users' rating? Simply put, I've found it to be more reliable than any other ratings vendor. In my experience, Rotten Tomatoes and IMDb are often way off the mark. 
+But why specifically the 'Google users' rating? Simply put, I've found it to be more reliable than any other ratings vendor. In my experience, Rotten Tomatoes and IMDb are often way off the mark (see the [factoids section](#some-factoids) below). I still collect the ratings from these vendors if they're available on the SERP, though.
 
-That's why I've put in the extra effort to collect that coveted percentage you see when you google a title:
+But the reason I conceived this project was to collect that coveted percentage you see when you google a title:
 
 <p align="center">
 <img src="./assets/interstellar.png" />
@@ -60,16 +60,28 @@ ENV BRD_ZONE=...
 
 ## Learnings
 [TODO]
-- `pg_restore` really does not like having the environment variable `PHOST` set
-- When using SSEs with [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource), you might lose a day debugging if you don't know that `EventSource` really likes endpoints that unambiguously return the mime type `text/event-stream` with an OPTIONS request
+- `pg_restore` really does not like having the environment variable `PGHOST` set
+- When using SSEs with [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource), you might lose a day debugging if you don't know that `EventSource` really likes endpoints that unambiguously return the mime type `text/event-stream` with an OPTIONS request (i.e. having /api/titles accept POST requests with mime type `application/json` and return responses with type `text/event-stream` is no good).
 
-## Loose Ends
-[TODO]
-- I'd love to include a Reddit sentiment score as part of this. I find Reddit threads to be even more reliable than Google user reviews.
+### Some factoids
+Out of 2,356 titles that had ratings from all 3, the distribution shows a clear difference ([code](./scripts/throwaway/plot_ratings.py)):
+- Google reviews tend to be more positive compared to IMDb
+- Rotten Tomatoes has a slighly higher median rating compared to Google users, but also FAR more variance
+- IMDb ratings follow an almost perfect normal distribution, which is suspect to me. I don't think one would expect that with ratings data and I believe it's because of their proprietary [weighting system](https://help.imdb.com/article/imdb/track-movies-tv/weighted-average-ratings).
+
+<p align="center">
+<img src="./assets/ratings-plot.png" />
+</p>
+
+## Future Work / Loose Ends
 - Testing is non-existent.
 - Error handling could use some improvement.
 - The data in the titles table needs to be cleaned up. There's a lot of "titles" in there that actually correspond to seasons and episodes. It poisons the data model (mixed entities).
-- The `Availability` model (table) has a `country` attribute but right now all connections are just assumed to be US... the country code could be intercepted from e.g. `netflix.reactContext.models.geo.data.requestCountry` and sent as a query parameter when POSTing to /api/titles in the background script.
+- The cost for 1000 Google user ratings is currently sitting around $2.82. The data could be used to drive this toward the optimum of $1.50 (API cost per 1000 requests) by e.g. querying the logs for which "format" of query tends to perform best on first iteration (see [_build_query](./netflix_critic_data/scripts/database_setup/common.py))
+- I'd love to include a Reddit sentiment score as part of this. I find the discussions on Reddit are also really helpful for gauging whether or not a movie is worth the watch.
+- `JobStore` is not really designed for concurrency, and likely not thread-safe (also not ideal to indefinitely persist that data in memory - need a proper caching mechanism). Same goes for classes like `NetflixSessionHandler` and `BrightDataSessionHandler`.
+- The `Availability` model (table) has a `country` attribute but right now all connections are just assumed to be US... the country code could be intercepted from e.g. `netflix.reactContext.models.geo.data.requestCountry.id` and sent as a query parameter when POSTing to /api/titles in the background script.
+- The Bright Data API returns a json data structure with more than just the page HTML - might be worth saving the raw JSON and exploring these attributes.
 
 ## Misc
 Useful commands for (my) reference:
