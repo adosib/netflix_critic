@@ -56,9 +56,9 @@ POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
 DATABASE_URL = f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
 
+available_country = "US"
 engine = create_engine(DATABASE_URL, echo=True)
 global_job_store = JobStore()
-country = "US"
 app = FastAPI()
 app.mount("/title", StaticFiles(directory=DOWNLOADED_TITLEPAGES_DIR, html=True))
 templates = Jinja2Templates(directory=THIS_DIR / "templates")
@@ -267,7 +267,8 @@ def get_all_available_titles(session: DatabaseSessionDep):
 async def store_title_ids_for_processing(
     payload: list[int], country: Annotated[str | None, Query()] = "US"
 ):
-    country = country
+    global available_country
+    available_country = country
     job_id = str(uuid4())
     global_job_store[job_id] = payload
     return {
@@ -395,7 +396,7 @@ async def stream_ratings(
             availability.append(
                 Availability(
                     netflix_id=netflix_id,
-                    country=country,
+                    country=available_country,
                     titlepage_reachable=True,
                     available=True,
                 )
