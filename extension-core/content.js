@@ -161,7 +161,6 @@ class TitleCard {
     
                 if (elapsed >= timeout) {
                     clearInterval(intervalId);
-                    console.warn(`Timeout reached for title ID ${this.netflixId}`);
                     resolve(null);
                 }
 
