@@ -85,6 +85,7 @@ Out of 2,356 titles that had ratings from all 3, the distribution shows a clear 
 - Testing is non-existent.
 - Error handling could use some improvement.
 - The data in the titles table needs to be cleaned up. There's a lot of "titles" in there that actually correspond to seasons and episodes (from the seed data). It poisons the data model (mixed entities).
+- The SERP logic is not perfect and there are sometimes false positives especially for basic movie titles i.e. those one-word titles like "Monster." There are a number of different approaches for this problem; one that's certainly worth exploring is searching by the title's thumbnail image.
 - The cost for 1000 Google user ratings is currently sitting around $2.82. The data could be used to drive this toward the optimum of $1.50 (API cost per 1000 requests) by e.g. querying the logs for which "format" of query tends to perform best on first iteration (see [_build_query](./netflix_critic_data/scripts/database_setup/common.py))
 - I'd love to include a Reddit sentiment score as part of this. I find the discussions on Reddit are also really helpful for gauging whether or not a movie is worth the watch.
 - `JobStore` is not really designed for concurrency, and likely not thread-safe (also not ideal to indefinitely persist that data in memory - need a proper caching mechanism). Same goes for classes like `NetflixSessionHandler` and `BrightDataSessionHandler`.
