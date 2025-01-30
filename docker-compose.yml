@@ -11,6 +11,8 @@ services:
       PGDATABASE: postgres
       PGUSER: postgres
       PGPORT: 5432
+    ports:
+      - 5432:5432
     volumes:
       - ./data/pg_dump:/data/pg_dump
       - ./data/raw/title:/data/raw/title
