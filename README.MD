@@ -58,6 +58,15 @@ If your zone is called something different from 'serp_api1' then you'll have to 
 ENV BRD_ZONE=...
 ```
 
+## How it works
+The below diagram roughly represents how things work. The most important high-level things to note:
+- There is a critical JavaScript context variable that is collected and parsed from Netflix's title page (must be on an unauthenticated session) which supplies all the title data (release year, content type, metadata)
+- The SERP content is retrieved using Bright Data's SERP API
+- Data is sent from the web server to the front end via Server Sent Events (SSE)
+<p align="center">
+<img src="./assets/seq-diagram.svg" />
+</p>
+
 ## Learnings
 
 ### Insights from the data
