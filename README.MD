@@ -41,7 +41,7 @@ At this point you should be set. Now you can browse Netflix, enhanced with ratin
 <img src="./assets/install-extension.gif" />
 </p>
 
-### Collecting Ratings Data
+### (Optional) Collecting Ratings Data
 Optional: If you additionally want to actively pull down ratings data for titles that aren't readily available in the database, you should be able to get a free trial with some credits for the [Bright Data SERP API](https://brightdata.com/products/serp-api).
 
 Beyond the free trial credits, it's pay-as-you-go at a rate of $1.50/1000 requests (as of the time of writing), which is very reasonably priced.
@@ -73,7 +73,7 @@ The below diagram roughly represents how things work. The most important high-le
 Out of 2,356 titles that had ratings from all 3, the distribution shows a clear difference ([code](./scripts/throwaway/plot_ratings.py)):
 - Google reviews tend to be more positive compared to IMDb
 - Rotten Tomatoes has a slighly higher median rating compared to Google users, but also FAR more variance
-- IMDb ratings follow an almost perfect normal distribution, which is suspect to me. I don't think one would expect that with ratings data and I believe it's because of their proprietary [weighting system](https://help.imdb.com/article/imdb/track-movies-tv/weighted-average-ratings).
+- IMDb ratings follow an almost perfect normal distribution, which is suspect to me. I don't think one would expect that with ratings data and I believe it's because of their proprietary [weighting system](https://help.imdb.com/article/imdb/track-movies-tv/weighted-average-ratings/GWT2DSBYVT2F25SK#).
 
 <p align="center">
 <img src="./assets/ratings-plot.png" />
